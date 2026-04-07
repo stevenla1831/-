@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "儲存使用者資訊與權限",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "LINE userId" },
+        "displayName": { "type": "string", "description": "LINE 顯示名稱" },
+        "photoURL": { "type": "string", "description": "LINE 大頭貼" },
+        "phoneNumber": { "type": "string", "description": "綁定手機號碼" },
+        "role": { "type": "string", "enum": ["admin", "store", "user"], "description": "使用者權限" },
+        "assignedStores": { "type": "array", "items": { "type": "string" }, "description": "店家身分所屬店家 ID" },
+        "createdAt": { "type": "number", "description": "建立時間" }
+      },
+      "required": ["uid", "displayName", "role", "createdAt"]
+    },
+    "Store": {
+      "title": "Store",
+      "description": "店家資訊",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "店家 ID" },
+        "name": { "type": "string", "description": "店家名稱" },
+        "description": { "type": "string", "description": "店家描述" },
+        "createdAt": { "type": "number", "description": "建立時間" }
+      },
+      "required": ["id", "name", "createdAt"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "優惠券序號",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "優惠券 ID" },
+        "storeId": { "type": "string", "description": "所屬店家 ID" },
+        "type": { "type": "string", "enum": ["100pt", "50pt", "20pt"], "description": "優惠券類型" },
+        "code": { "type": "string", "description": "序號" },
+        "status": { "type": "string", "enum": ["available", "used"], "description": "狀態" },
+        "userId": { "type": "string", "description": "領取者 ID" },
+        "drawnAt": { "type": "number", "description": "領取時間" }
+      },
+      "required": ["id", "storeId", "type", "code", "status"]
+    },
+    "DrawRecord": {
+      "title": "DrawRecord",
+      "description": "抽獎紀錄",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "紀錄 ID" },
+        "userId": { "type": "string", "description": "使用者 ID" },
+        "storeId": { "type": "string", "description": "店家 ID" },
+        "couponId": { "type": "string", "description": "優惠券 ID" },
+        "timestamp": { "type": "number", "description": "抽獎時間" }
+      },
+      "required": ["id", "userId", "storeId", "couponId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "使用者資料"
+    },
+    "/stores/{storeId}": {
+      "schema": "Store",
+      "description": "店家資料"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "優惠券資料"
+    },
+    "/drawRecords/{recordId}": {
+      "schema": "DrawRecord",
+      "description": "抽獎紀錄"
+    }
+  }
+}

@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (required)
+    //   - photoURL: string (required)
+    //   - role: string (required, ['admin', 'store', 'user'])
+    //   - assignedStores: list (optional, for store owners)
+    //   - createdAt: number (required)
+    //
+    // Collection: stores
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - description: string (optional)
+    //   - createdAt: number (required)
+    //
+    // Collection: coupons
+    // Fields:
+    //   - id: string (required)
+    //   - storeId: string (required)
+    //   - type: string (required, ['100pt', '50pt', '20pt'])
+    //   - code: string (required)
+    //   - status: string (required, ['available', 'used'])
+    //   - userId: string (optional)
+    //   - drawnAt: number (optional)
+    //
+    // Collection: drawRecords
+    // Fields:
+    //   - id: string (required)
+    //   - userId: string (required)
+    //   - storeId: string (required)
+    //   - couponId: string (required)
+    //   - timestamp: number (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "stevenla1831@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isStoreOwner(storeId) {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'store' &&
+         storeId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedStores);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'displayName', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             data.role in ['admin', 'store', 'user'] &&
+             data.createdAt is number;
+    }
+
+    function isValidStore(data) {
+      return hasRequiredFields(['id', 'name', 'createdAt']) &&
+             data.id is string && data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.createdAt is number;
+    }
+
+    function isValidCoupon(data) {
+      return hasRequiredFields(['id', 'storeId', 'type', 'code', 'status']) &&
+             data.id is string && data.storeId is string &&
+             data.type in ['100pt', '50pt', '20pt'] &&
+             data.code is string && data.code.size() > 0 && data.code.size() < 50 &&
+             data.status in ['available', 'used'];
+    }
+
+    function isValidDrawRecord(data) {
+      return hasRequiredFields(['id', 'userId', 'storeId', 'couponId', 'timestamp']) &&
+             data.id is string && data.userId is string && data.storeId is string &&
+             data.couponId is string && data.timestamp is number;
+    }
+
+    // ===============================================================
+    // Match Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
+                      (isOwner(userId) && request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) &&
+                      ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+    }
+
+    match /stores/{storeId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /coupons/{couponId} {
+      allow read: if isAuthenticated() && (isAdmin() || isStoreOwner(resource.data.storeId) || isOwner(resource.data.userId));
+      allow create: if isAdmin() || (isAuthenticated() && isStoreOwner(request.resource.data.storeId) && isValidCoupon(request.resource.data));
+      allow update: if isAdmin() || (isAuthenticated() && (isStoreOwner(resource.data.storeId) || isOwner(request.auth.uid)) && isValidCoupon(request.resource.data));
+    }
+
+    match /drawRecords/{recordId} {
+      allow read: if isAuthenticated() && (isAdmin() || isStoreOwner(resource.data.storeId) || isOwner(resource.data.userId));
+      allow create: if isAuthenticated() && isValidDrawRecord(request.resource.data) && (isOwner(request.resource.data.userId) || isAdmin());
+    }
+  }
+}

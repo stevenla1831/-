@@ -1,0 +1,5 @@
+{
+  "name": "白日衣衫淨 - 抽獎系統",
+  "description": "整合 LINE LIFF 的抽獎系統，支援多店家管理、優惠券批量匯入與管理員後台。",
+  "requestFramePermissions": ["camera"]
+}
