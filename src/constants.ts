@@ -1,4 +1,4 @@
-export const LIFF_ID = '你的LIFF_ID'; // 需替換為實際的 LIFF ID
+export const LIFF_ID = '2009693707-DihGx8m5'; // 需替換為實際的 LIFF ID
 
 export const COUPON_TYPES = [
   { label: '100點', value: '100pt' },

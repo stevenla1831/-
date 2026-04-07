@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { db, handleFirestoreError, OperationType, auth } from './firebase';
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, getDoc, limit, orderBy } from 'firebase/firestore';
 import { Gift, Ticket, History, User, LogOut, LayoutDashboard, Store as StoreIcon, Settings, Search, QrCode, Plus, Trash2, FileUp, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Store, Coupon, DrawRecord, UserProfile, CouponType } from './types';
+import { Store, Coupon, DrawRecord, UserProfile, CouponType, UserRole } from './types';
 import { LIFF_ID, COUPON_TYPES, ROLES } from './constants';
 import liff from '@line/liff';
 
