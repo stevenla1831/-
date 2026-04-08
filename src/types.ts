@@ -18,15 +18,17 @@ export interface Store {
 }
 
 export type CouponType = '100pt' | '50pt' | '20pt';
+export type CouponStatus = 'available' | 'assigned' | 'used';
 
 export interface Coupon {
   id: string;
   storeId: string;
   type: CouponType;
   code: string;
-  status: 'available' | 'used';
+  status: CouponStatus;
   userId?: string;
-  drawnAt?: number;
+  assignedAt?: number; // when drawn/gifted
+  usedAt?: number;     // when marked used by store
 }
 
 export interface DrawRecord {
@@ -34,5 +36,15 @@ export interface DrawRecord {
   userId: string;
   storeId: string;
   couponId: string;
+  week: string; // ISO week key e.g. "2025-W01"
   timestamp: number;
+  source: 'draw' | 'gift'; // how coupon was obtained
+}
+
+export interface WeeklyDraw {
+  userId: string;
+  storeId: string;
+  week: string;
+  couponId: string;
+  drawnAt: number;
 }
