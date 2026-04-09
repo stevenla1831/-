@@ -113,5 +113,13 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isAdmin();
     }
+
+    // ── announcements ────────────────────────────────────────────
+    match /announcements/{announcementId} {
+      // All authenticated users can read active announcements
+      allow read: if isAuth();
+      // Only admins can create, update, delete
+      allow write: if isAdmin();
+    }
   }
 }

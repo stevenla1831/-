@@ -6,14 +6,18 @@ import {
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
   Search, CheckCircle2, AlertCircle, Loader2, ChevronRight, ShieldCheck,
-  ToggleLeft, ToggleRight, Download,
+  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from 'recharts';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Store, UserProfile, DrawRecord, Coupon, UserRole } from '../types';
+import { Store, UserProfile, DrawRecord, Coupon, UserRole, Announcement } from '../types';
 import { ROLES } from '../constants';
 
-type AdminView = 'menu' | 'stores' | 'users' | 'stats';
+type AdminView = 'menu' | 'stores' | 'users' | 'userlist' | 'stats' | 'announce';
 
 /* ─── Store Management ──────────────────────────────────────── */
 const StoreManagement: React.FC = () => {
@@ -322,6 +326,224 @@ const UserManagement: React.FC = () => {
   );
 };
 
+/* ─── User List ──────────────────────────────────────────────── */
+const ROLE_BADGE: Record<string, string> = {
+  admin: 'bg-red-50 text-red-600 border-red-100',
+  store: 'bg-purple-50 text-purple-600 border-purple-100',
+  user: 'bg-green-50 text-green-600 border-green-100',
+};
+
+const UserList: React.FC = () => {
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filterRole, setFilterRole] = useState<'all' | UserRole>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    getDocs(query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(200)))
+      .then(snap => setUsers(snap.docs.map(d => d.data() as UserProfile)))
+      .catch(err => handleFirestoreError(err, OperationType.LIST, 'users'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = users.filter(u => {
+    if (filterRole !== 'all' && u.role !== filterRole) return false;
+    if (searchTerm) {
+      const t = searchTerm.toLowerCase();
+      return (
+        u.displayName.toLowerCase().includes(t) ||
+        (u.phoneNumber ?? '').includes(t) ||
+        u.uid.includes(t)
+      );
+    }
+    return true;
+  });
+
+  const counts = {
+    all: users.length,
+    admin: users.filter(u => u.role === 'admin').length,
+    store: users.filter(u => u.role === 'store').length,
+    user: users.filter(u => u.role === 'user').length,
+  };
+
+  if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
+
+  return (
+    <div className="p-6 space-y-4">
+      {/* Summary pills */}
+      <div className="flex gap-2 flex-wrap">
+        {(['all', 'admin', 'store', 'user'] as const).map(r => (
+          <button
+            key={r}
+            onClick={() => setFilterRole(r)}
+            className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${
+              filterRole === r ? 'bg-[#27ae60] text-white border-[#27ae60]' : 'bg-white text-gray-500 border-gray-200'
+            }`}
+          >
+            {r === 'all' ? '全部' : ROLES.find(x => x.value === r)?.label}
+            {' '}({counts[r]})
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+        <input
+          type="text"
+          placeholder="搜尋名稱 / 手機 / UID"
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 outline-none text-sm focus:ring-2 focus:ring-[#27ae60]"
+        />
+      </div>
+
+      {/* List */}
+      <div className="space-y-2">
+        {filtered.map(u => (
+          <div key={u.uid} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center gap-3">
+            <img
+              src={u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.displayName)}&background=27ae60&color=fff&size=40`}
+              alt=""
+              className="w-10 h-10 rounded-full shrink-0 border border-gray-100"
+            />
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-gray-900 text-sm truncate">{u.displayName}</p>
+              <p className="text-[10px] text-gray-400 truncate">
+                {u.phoneNumber || '—'} · {new Date(u.createdAt).toLocaleDateString()}
+              </p>
+            </div>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${ROLE_BADGE[u.role] ?? ROLE_BADGE.user}`}>
+              {ROLES.find(r => r.value === u.role)?.label ?? u.role}
+            </span>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <p className="text-center text-gray-300 py-8 text-sm">找不到符合的用戶</p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ─── Announcement Management ────────────────────────────────── */
+const AnnouncementManagement: React.FC = () => {
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'announcements'), orderBy('createdAt', 'desc')));
+      setAnnouncements(snap.docs.map(d => ({ ...d.data(), id: d.id } as Announcement)));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'announcements');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAdd = async () => {
+    if (!text.trim()) return;
+    setSaving(true);
+    try {
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const a: Announcement = { id, message: text.trim(), active: true, createdAt: now, updatedAt: now };
+      await setDoc(doc(db, 'announcements', id), a);
+      setText('');
+      setEditing(false);
+      load();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'announcements');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggle = async (a: Announcement) => {
+    try {
+      await updateDoc(doc(db, 'announcements', a.id), { active: !a.active, updatedAt: Date.now() });
+      setAnnouncements(prev => prev.map(x => x.id === a.id ? { ...x, active: !x.active } : x));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `announcements/${a.id}`);
+    }
+  };
+
+  const handleDelete = async (a: Announcement) => {
+    if (!window.confirm('確定要刪除此公告？')) return;
+    try {
+      await deleteDoc(doc(db, 'announcements', a.id));
+      setAnnouncements(prev => prev.filter(x => x.id !== a.id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `announcements/${a.id}`);
+    }
+  };
+
+  if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
+
+  return (
+    <div className="p-6 space-y-4">
+      {announcements.map(a => (
+        <div key={a.id} className={`bg-white p-4 rounded-xl border shadow-sm ${a.active ? 'border-[#27ae60]/30' : 'border-gray-100 opacity-60'}`}>
+          <p className="text-sm text-gray-800 leading-relaxed mb-3">{a.message}</p>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-gray-400">{new Date(a.createdAt).toLocaleDateString()}</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleToggle(a)}
+                className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-lg transition-colors ${
+                  a.active ? 'text-green-600 bg-green-50' : 'text-gray-400 bg-gray-50'
+                }`}
+              >
+                {a.active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                {a.active ? '顯示中' : '已隱藏'}
+              </button>
+              <button
+                onClick={() => handleDelete(a)}
+                className="text-red-400 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {editing ? (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-5 rounded-2xl border-2 border-[#27ae60]/30 space-y-3 shadow-sm">
+          <textarea
+            rows={3}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder="輸入公告內容..."
+            className="w-full p-3 rounded-xl border border-gray-200 outline-none text-sm focus:ring-2 focus:ring-[#27ae60] resize-none"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => { setEditing(false); setText(''); }}
+              className="flex-1 py-2 rounded-xl border border-gray-200 text-gray-500 text-sm font-bold">取消</button>
+            <button onClick={handleAdd} disabled={saving || !text.trim()}
+              className="flex-1 py-2 rounded-xl bg-[#27ae60] text-white text-sm font-bold disabled:opacity-50">
+              {saving ? '儲存中...' : '發布公告'}
+            </button>
+          </div>
+        </motion.div>
+      ) : (
+        <button onClick={() => setEditing(true)}
+          className="w-full border-2 border-dashed border-gray-200 p-4 rounded-xl text-gray-400 flex items-center justify-center gap-2 hover:border-[#27ae60]/40 hover:text-[#27ae60] transition-colors">
+          <Plus className="w-5 h-5" />新增公告
+        </button>
+      )}
+    </div>
+  );
+};
+
 /* ─── Cross-store Stats ──────────────────────────────────────── */
 const CrossStoreStats: React.FC = () => {
   const [stats, setStats] = useState<{
@@ -395,9 +617,29 @@ const CrossStoreStats: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const PIE_COLORS = ['#27ae60', '#3498db', '#e67e22', '#9b59b6', '#e74c3c', '#1abc9c'];
+
+  const barData = stats.map(({ store, total, thisWeek }) => ({
+    name: store.name.length > 6 ? store.name.slice(0, 6) + '…' : store.name,
+    本週: thisWeek,
+    歷史: total,
+  }));
+
+  const totalUsed = stats.reduce((s, r) => s + r.used, 0);
+  const totalAvail = stats.reduce((s, r) => s + r.available, 0);
+  const totalAssigned = stats.reduce((s, r) => {
+    const assigned = r.total - r.available - r.used;
+    return s + Math.max(0, assigned);
+  }, 0);
+  const pieData = [
+    { name: '可用', value: totalAvail },
+    { name: '已派發', value: totalAssigned },
+    { name: '已使用', value: totalUsed },
+  ].filter(d => d.value > 0);
+
   return (
     <div className="p-6 space-y-6">
-      {/* Summary */}
+      {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-[#f0fff4] border border-green-100 rounded-2xl p-4 text-center">
           <p className="text-3xl font-black text-[#27ae60]">{totalWeek}</p>
@@ -408,6 +650,41 @@ const CrossStoreStats: React.FC = () => {
           <p className="text-xs font-bold text-gray-500 mt-1">歷史總抽獎次數</p>
         </div>
       </div>
+
+      {/* Bar chart — draws per store */}
+      {barData.length > 0 && (
+        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">各店家抽獎次數</p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={barData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+              <Bar dataKey="本週" fill="#27ae60" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="歷史" fill="#a8e6c0" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Pie chart — coupon inventory breakdown */}
+      {pieData.length > 0 && (
+        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">全站序號分佈</p>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={pieData} cx="50%" cy="50%" innerRadius={45} outerRadius={72}
+                dataKey="value" paddingAngle={3}>
+                {pieData.map((_, i) => (
+                  <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Per-store breakdown */}
       <div>
@@ -425,7 +702,12 @@ const CrossStoreStats: React.FC = () => {
           {stats.map(({ store, total, thisWeek, available, used }) => (
             <div key={store.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
               <div className="flex justify-between items-start mb-3">
-                <p className="font-bold text-gray-900">{store.name}</p>
+                <div>
+                  <p className="font-bold text-gray-900">{store.name}</p>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${store.isActive !== false ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                    {store.isActive !== false ? '進行中' : '已暫停'}
+                  </span>
+                </div>
                 <div className="text-right">
                   <p className="text-lg font-black text-[#27ae60]">{thisWeek}</p>
                   <p className="text-[10px] text-gray-400">本週</p>
@@ -458,9 +740,11 @@ const AdminDashboard: React.FC<{ profile: UserProfile }> = ({ profile }) => {
   const [view, setView] = useState<AdminView>('menu');
 
   const menuItems = [
-    { id: 'stores' as AdminView, label: '店家管理', sublabel: '新增 / 刪除店家', icon: StoreIcon, color: 'text-blue-500' },
-    { id: 'users' as AdminView, label: '帳號管理', sublabel: '權限 & 店家指派', icon: Users, color: 'text-purple-500' },
-    { id: 'stats' as AdminView, label: '跨店統計', sublabel: '全量數據查看', icon: BarChart2, color: 'text-orange-500' },
+    { id: 'stores' as AdminView, label: '店家管理', sublabel: '新增 / 刪除 / 暫停店家', icon: StoreIcon, color: 'text-blue-500' },
+    { id: 'users' as AdminView, label: '帳號管理', sublabel: '搜尋 & 權限設定', icon: Users, color: 'text-purple-500' },
+    { id: 'userlist' as AdminView, label: '用戶列表', sublabel: '瀏覽所有用戶', icon: Users, color: 'text-teal-500' },
+    { id: 'stats' as AdminView, label: '跨店統計', sublabel: '圖表 & 數據匯出', icon: BarChart2, color: 'text-orange-500' },
+    { id: 'announce' as AdminView, label: '公告管理', sublabel: '設定抽獎頁公告', icon: Megaphone, color: 'text-pink-500' },
   ];
 
   const viewLabel = menuItems.find(m => m.id === view)?.label ?? '管理後台';
@@ -508,9 +792,19 @@ const AdminDashboard: React.FC<{ profile: UserProfile }> = ({ profile }) => {
             <UserManagement />
           </motion.div>
         )}
+        {view === 'userlist' && (
+          <motion.div key="userlist" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <UserList />
+          </motion.div>
+        )}
         {view === 'stats' && (
           <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <CrossStoreStats />
+          </motion.div>
+        )}
+        {view === 'announce' && (
+          <motion.div key="announce" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <AnnouncementManagement />
           </motion.div>
         )}
       </AnimatePresence>

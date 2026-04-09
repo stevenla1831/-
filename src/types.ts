@@ -49,3 +49,11 @@ export interface WeeklyDraw {
   couponId: string;
   drawnAt: number;
 }
+
+export interface Announcement {
+  id: string;          // Firestore doc ID
+  message: string;     // Markdown-safe plain text
+  active: boolean;     // show on DrawPage when true
+  createdAt: number;
+  updatedAt: number;
+}

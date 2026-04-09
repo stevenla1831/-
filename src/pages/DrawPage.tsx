@@ -3,11 +3,11 @@ import {
   collection, query, where, getDocs, addDoc, doc,
   orderBy, limit, runTransaction,
 } from 'firebase/firestore';
-import { Gift, Store as StoreIcon, AlertCircle, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { Gift, Store as StoreIcon, AlertCircle, CheckCircle2, Loader2, Sparkles, Megaphone, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Store, Coupon, DrawRecord, UserProfile } from '../types';
+import { Store, Coupon, DrawRecord, UserProfile, Announcement } from '../types';
 import { COUPON_TYPES, getISOWeekKey, weeklyDrawDocId } from '../constants';
 
 /* ─── Slot Machine Animation ─────────────────────────────────── */
@@ -146,6 +146,8 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
   const [animating, setAnimating] = useState(false);
   const [result, setResult] = useState<Coupon | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const fetchStores = async () => {
@@ -157,7 +159,22 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
         handleFirestoreError(err, OperationType.LIST, 'stores');
       }
     };
+    const fetchAnnouncements = async () => {
+      try {
+        const q = query(
+          collection(db, 'announcements'),
+          where('active', '==', true),
+          orderBy('createdAt', 'desc'),
+          limit(3)
+        );
+        const snap = await getDocs(q);
+        setAnnouncements(snap.docs.map(d => ({ ...d.data(), id: d.id } as Announcement)));
+      } catch {
+        // non-critical, ignore
+      }
+    };
     fetchStores();
+    fetchAnnouncements();
   }, []);
 
   const handleDraw = async () => {
@@ -291,6 +308,28 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
       </header>
 
       <div className="space-y-5">
+        {/* Announcements */}
+        <AnimatePresence>
+          {announcements.filter(a => !dismissedIds.has(a.id)).map(a => (
+            <motion.div
+              key={a.id}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3"
+            >
+              <Megaphone className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <p className="flex-1 text-sm text-amber-800 font-medium leading-relaxed">{a.message}</p>
+              <button
+                onClick={() => setDismissedIds(prev => new Set([...prev, a.id]))}
+                className="text-amber-400 hover:text-amber-600 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
         {/* Store selection */}
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
           <h2 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
