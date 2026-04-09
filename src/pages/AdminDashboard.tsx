@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  collection, query, getDocs, addDoc, doc, updateDoc, deleteDoc,
+  collection, query, getDocs, setDoc, doc, updateDoc, deleteDoc,
   orderBy, limit, getDoc, where,
 } from 'firebase/firestore';
 import {
@@ -44,7 +44,7 @@ const StoreManagement: React.FC = () => {
     try {
       const id = newName.trim().toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
       const store: Store = { id, name: newName.trim(), description: newDesc.trim(), createdAt: Date.now() };
-      await addDoc(collection(db, 'stores'), store);
+      await setDoc(doc(db, 'stores', id), store);
       setNewName('');
       setNewDesc('');
       setAdding(false);
@@ -60,10 +60,7 @@ const StoreManagement: React.FC = () => {
     if (!window.confirm(`確定要刪除「${store.name}」嗎？此操作無法復原。`)) return;
     setDeletingId(store.id);
     try {
-      // Find the Firestore doc by store.id field
-      const q = query(collection(db, 'stores'), where('id', '==', store.id));
-      const snap = await getDocs(q);
-      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      await deleteDoc(doc(db, 'stores', store.id));
       setStores(prev => prev.filter(s => s.id !== store.id));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `stores/${store.id}`);
