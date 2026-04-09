@@ -298,20 +298,31 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
             選擇店家
           </h2>
           <div className="space-y-2">
-            {stores.map(store => (
-              <button
-                key={store.id}
-                onClick={() => { setSelectedStore(store); setError(null); }}
-                className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
-                  selectedStore?.id === store.id
-                    ? 'border-[#27ae60] bg-[#f0fff4]'
-                    : 'border-gray-100 hover:border-gray-200'
-                }`}
-              >
-                <p className="font-bold text-gray-900">{store.name}</p>
-                {store.description && <p className="text-xs text-gray-500 mt-0.5">{store.description}</p>}
-              </button>
-            ))}
+            {stores.map(store => {
+              const inactive = store.isActive === false;
+              return (
+                <button
+                  key={store.id}
+                  onClick={() => { if (!inactive) { setSelectedStore(store); setError(null); } }}
+                  disabled={inactive}
+                  className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
+                    inactive
+                      ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                      : selectedStore?.id === store.id
+                      ? 'border-[#27ae60] bg-[#f0fff4]'
+                      : 'border-gray-100 hover:border-gray-200'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="font-bold text-gray-900">{store.name}</p>
+                      {store.description && <p className="text-xs text-gray-500 mt-0.5">{store.description}</p>}
+                    </div>
+                    {inactive && <span className="text-[10px] text-gray-400 font-bold shrink-0 ml-2">暫停中</span>}
+                  </div>
+                </button>
+              );
+            })}
             {stores.length === 0 && (
               <p className="text-center text-gray-300 py-6 text-sm">目前沒有活動中的店家</p>
             )}

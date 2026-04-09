@@ -6,6 +6,7 @@ import {
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
   Search, CheckCircle2, AlertCircle, Loader2, ChevronRight, ShieldCheck,
+  ToggleLeft, ToggleRight, Download,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -23,6 +24,7 @@ const StoreManagement: React.FC = () => {
   const [newDesc, setNewDesc] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchStores = useCallback(async () => {
     setLoading(true);
@@ -43,7 +45,7 @@ const StoreManagement: React.FC = () => {
     setSaving(true);
     try {
       const id = newName.trim().toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
-      const store: Store = { id, name: newName.trim(), description: newDesc.trim(), createdAt: Date.now() };
+      const store: Store = { id, name: newName.trim(), description: newDesc.trim(), isActive: true, createdAt: Date.now() };
       await setDoc(doc(db, 'stores', id), store);
       setNewName('');
       setNewDesc('');
@@ -53,6 +55,19 @@ const StoreManagement: React.FC = () => {
       handleFirestoreError(err, OperationType.CREATE, 'stores');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleActive = async (store: Store) => {
+    setTogglingId(store.id);
+    try {
+      const next = store.isActive === false ? true : false;
+      await updateDoc(doc(db, 'stores', store.id), { isActive: next });
+      setStores(prev => prev.map(s => s.id === store.id ? { ...s, isActive: next } : s));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `stores/${store.id}`);
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -73,22 +88,41 @@ const StoreManagement: React.FC = () => {
 
   return (
     <div className="p-6 space-y-4">
-      {stores.map(store => (
-        <div key={store.id} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center">
-          <div>
-            <p className="font-bold text-gray-900">{store.name}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{store.description || '—'}</p>
-            <p className="text-[10px] text-gray-300 mt-0.5">ID: {store.id}</p>
+      {stores.map(store => {
+        const active = store.isActive !== false;
+        return (
+          <div key={store.id} className={`bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center transition-opacity ${active ? 'border-gray-100' : 'border-gray-100 opacity-60'}`}>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-gray-900">{store.name}</p>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                  {active ? '進行中' : '已暫停'}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">{store.description || '—'}</p>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => handleToggleActive(store)}
+                disabled={togglingId === store.id}
+                title={active ? '點擊暫停' : '點擊啟用'}
+                className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${active ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:bg-gray-50'}`}
+              >
+                {togglingId === store.id
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={() => handleDelete(store)}
+                disabled={deletingId === store.id}
+                className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {deletingId === store.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => handleDelete(store)}
-            disabled={deletingId === store.id}
-            className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-          >
-            {deletingId === store.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-          </button>
-        </div>
-      ))}
+        );
+      })}
 
       {/* Add new store */}
       {adding ? (
@@ -341,6 +375,26 @@ const CrossStoreStats: React.FC = () => {
   const totalDraws = stats.reduce((s, r) => s + r.total, 0);
   const totalWeek = stats.reduce((s, r) => s + r.thisWeek, 0);
 
+  const handleExportCSV = () => {
+    const header = ['店家', '狀態', '本週抽獎', '歷史總計', '可用序號', '已使用'];
+    const rows = stats.map(({ store, total, thisWeek, available, used }) => [
+      store.name,
+      store.isActive !== false ? '進行中' : '已暫停',
+      thisWeek,
+      total,
+      available,
+      used,
+    ]);
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `draw-stats-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="p-6 space-y-6">
       {/* Summary */}
@@ -357,7 +411,16 @@ const CrossStoreStats: React.FC = () => {
 
       {/* Per-store breakdown */}
       <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">各店家明細</p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">各店家明細</p>
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-1.5 text-xs font-bold text-[#27ae60] bg-[#f0fff4] border border-green-100 px-3 py-1.5 rounded-full hover:bg-green-100 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            匯出 CSV
+          </button>
+        </div>
         <div className="space-y-3">
           {stats.map(({ store, total, thisWeek, available, used }) => (
             <div key={store.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">

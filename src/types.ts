@@ -14,6 +14,7 @@ export interface Store {
   id: string;
   name: string;
   description: string;
+  isActive: boolean; // false = lottery paused for this store
   createdAt: number;
 }
 
