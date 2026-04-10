@@ -165,7 +165,7 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
           collection(db, 'announcements'),
           where('active', '==', true),
           orderBy('createdAt', 'desc'),
-          limit(3)
+          limit(20)
         );
         const snap = await getDocs(q);
         setAnnouncements(snap.docs.map(d => ({ ...d.data(), id: d.id } as Announcement)));
@@ -308,9 +308,14 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
       </header>
 
       <div className="space-y-5">
-        {/* Announcements */}
+        {/* Announcements — filter by selected store */}
         <AnimatePresence>
-          {announcements.filter(a => !dismissedIds.has(a.id)).map(a => (
+          {announcements.filter(a => {
+            if (dismissedIds.has(a.id)) return false;
+            if (!a.storeIds || a.storeIds === 'all') return true;
+            if (!selectedStore) return false;
+            return (a.storeIds as string[]).includes(selectedStore.id);
+          }).map(a => (
             <motion.div
               key={a.id}
               initial={{ opacity: 0, y: -8 }}

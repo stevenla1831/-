@@ -30,6 +30,12 @@ export interface Coupon {
   userId?: string;
   assignedAt?: number; // when drawn/gifted
   usedAt?: number;     // when marked used by store
+  // Optional fields from CSV import
+  eventName?: string;
+  validFrom?: number;
+  validTo?: number;
+  minAmount?: number;
+  maxUses?: number;
 }
 
 export interface DrawRecord {
@@ -56,4 +62,5 @@ export interface Announcement {
   active: boolean;     // show on DrawPage when true
   createdAt: number;
   updatedAt: number;
+  storeIds?: string[] | 'all'; // undefined or 'all' = show to all stores
 }

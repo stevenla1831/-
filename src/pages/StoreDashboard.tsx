@@ -329,45 +329,123 @@ const StatsPanel: React.FC<{ store: Store }> = ({ store }) => {
   );
 };
 
+/* ─── CSV helper ─────────────────────────────────────────────── */
+function parseCSV(text: string): string[][] {
+  return text.split(/\r?\n/).map(line => {
+    const cols: string[] = [];
+    let cur = '';
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; continue; }
+      if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    cols.push(cur.trim());
+    return cols;
+  }).filter(r => r.some(c => c));
+}
+
+function guessType(val: string): string {
+  if (val.includes('100')) return '100pt';
+  if (val.includes('50')) return '50pt';
+  if (val.includes('20')) return '20pt';
+  return '100pt';
+}
+
+function parseDate(val: string): number | undefined {
+  if (!val) return undefined;
+  const d = new Date(val.replace(/\//g, '-'));
+  return isNaN(d.getTime()) ? undefined : d.getTime();
+}
+
 /* ─── Import ─────────────────────────────────────────────────── */
 const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
+  const [mode, setMode] = useState<'manual' | 'csv'>('manual');
   const [couponType, setCouponType] = useState<string>('100pt');
   const [codesText, setCodesText] = useState('');
+  const [csvPreview, setCsvPreview] = useState<{ code: string; type: string; eventName?: string; validFrom?: number; validTo?: number; minAmount?: number }[]>([]);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ success: number; dupes: number } | null>(null);
 
-  const handleImport = async () => {
-    if (!codesText.trim()) return;
+  // CSV column header index mapping
+  const COL = {
+    code: ['優惠碼', 'code', '序列號'],
+    type: ['優惠方式', 'type'],
+    event: ['活動名稱', 'event'],
+    from: ['活動開始時間', 'start'],
+    to: ['活動結束時間', 'end'],
+    min: ['低銷金額', '最低消費', 'min'],
+  };
+
+  const findIdx = (headers: string[], keys: string[]) =>
+    headers.findIndex(h => keys.some(k => h.includes(k)));
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const rows = parseCSV(text);
+      if (rows.length < 2) return;
+      const headers = rows[0].map(h => h.trim());
+      const ci = {
+        code: findIdx(headers, COL.code),
+        type: findIdx(headers, COL.type),
+        event: findIdx(headers, COL.event),
+        from: findIdx(headers, COL.from),
+        to: findIdx(headers, COL.to),
+        min: findIdx(headers, COL.min),
+      };
+      if (ci.code < 0) { alert('找不到「優惠碼」欄位，請確認 CSV 欄位標題。'); return; }
+      const items = rows.slice(1).map(r => ({
+        code: r[ci.code] ?? '',
+        type: ci.type >= 0 && r[ci.type] ? guessType(r[ci.type]) : couponType,
+        eventName: ci.event >= 0 ? r[ci.event] : undefined,
+        validFrom: ci.from >= 0 ? parseDate(r[ci.from] ?? '') : undefined,
+        validTo: ci.to >= 0 ? parseDate(r[ci.to] ?? '') : undefined,
+        minAmount: ci.min >= 0 && r[ci.min] ? Number(r[ci.min].replace(/[^0-9.]/g, '')) || undefined : undefined,
+      })).filter(x => x.code);
+      setCsvPreview(items);
+    };
+    reader.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
+
+  const runImport = async (items: { code: string; type: string; eventName?: string; validFrom?: number; validTo?: number; minAmount?: number }[]) => {
     setImporting(true);
     setResult(null);
-    const codes = codesText.split('\n').map(c => c.trim()).filter(Boolean);
-
-    // Check for duplicate codes in same store
-    const existingQ = query(collection(db, 'coupons'), where('storeId', '==', store.id));
-    const existingSnap = await getDocs(existingQ);
-    const existingCodes = new Set(existingSnap.docs.map(d => d.data().code));
-
-    let success = 0;
-    let dupes = 0;
     try {
-      for (const code of codes) {
-        if (existingCodes.has(code)) { dupes++; continue; }
-        await addDoc(collection(db, 'coupons'), {
-          id: crypto.randomUUID(),
-          storeId: store.id,
-          type: couponType,
-          code,
-          status: 'available',
-        });
+      const existingSnap = await getDocs(query(collection(db, 'coupons'), where('storeId', '==', store.id)));
+      const existingCodes = new Set(existingSnap.docs.map(d => d.data().code));
+      let success = 0, dupes = 0;
+      for (const item of items) {
+        if (existingCodes.has(item.code)) { dupes++; continue; }
+        const data: Record<string, unknown> = {
+          id: crypto.randomUUID(), storeId: store.id,
+          type: item.type, code: item.code, status: 'available',
+        };
+        if (item.eventName) data.eventName = item.eventName;
+        if (item.validFrom) data.validFrom = item.validFrom;
+        if (item.validTo) data.validTo = item.validTo;
+        if (item.minAmount) data.minAmount = item.minAmount;
+        await addDoc(collection(db, 'coupons'), data);
         success++;
       }
       setResult({ success, dupes });
       setCodesText('');
+      setCsvPreview([]);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'coupons');
     } finally {
       setImporting(false);
     }
+  };
+
+  const handleManualImport = () => {
+    const codes = codesText.split('\n').map(c => c.trim()).filter(Boolean);
+    runImport(codes.map(code => ({ code, type: couponType })));
   };
 
   return (
@@ -376,50 +454,99 @@ const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
           className="bg-green-50 border border-green-100 rounded-2xl p-4">
           <p className="text-sm font-bold text-green-700">
-            成功匯入 {result.success} 組 {result.dupes > 0 ? `（略過 ${result.dupes} 組重複）` : ''}
+            成功匯入 {result.success} 組{result.dupes > 0 ? `，略過 ${result.dupes} 組重複` : ''}
           </p>
         </motion.div>
       )}
-      <div>
-        <label className="block text-sm font-bold text-gray-700 mb-2">序號類型</label>
-        <div className="flex gap-2">
-          {COUPON_TYPES.map(t => (
-            <button key={t.value} onClick={() => setCouponType(t.value)}
-              className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-all ${
-                couponType === t.value ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]' : 'border-gray-100 text-gray-400'
-              }`}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+
+      {/* Mode toggle */}
+      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+        {(['manual', 'csv'] as const).map(m => (
+          <button key={m} onClick={() => setMode(m)}
+            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+              mode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400'
+            }`}>
+            {m === 'manual' ? '手動輸入' : 'CSV 檔案匯入'}
+          </button>
+        ))}
       </div>
-      <div>
-        <label className="block text-sm font-bold text-gray-700 mb-2">貼上序號（每行一組）</label>
-        <textarea
-          rows={10}
-          value={codesText}
-          onChange={e => setCodesText(e.target.value)}
-          placeholder="ABC123&#10;DEF456&#10;GHI789"
-          className="w-full p-3 rounded-xl border border-gray-200 outline-none font-mono text-sm focus:ring-2 focus:ring-[#27ae60]"
-        />
-        <p className="text-xs text-gray-400 mt-1">
-          共 {codesText.split('\n').filter(c => c.trim()).length} 組序號
-        </p>
-      </div>
-      <button
-        onClick={handleImport}
-        disabled={importing || !codesText.trim()}
-        className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
-        {importing ? '匯入中...' : '確認匯入'}
-      </button>
+
+      {mode === 'manual' ? (
+        <>
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">序號類型</label>
+            <div className="flex gap-2">
+              {COUPON_TYPES.map(t => (
+                <button key={t.value} onClick={() => setCouponType(t.value)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-all ${
+                    couponType === t.value ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]' : 'border-gray-100 text-gray-400'
+                  }`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">貼上序號（每行一組）</label>
+            <textarea
+              rows={10}
+              value={codesText}
+              onChange={e => setCodesText(e.target.value)}
+              placeholder={'ABC123\nDEF456\nGHI789'}
+              className="w-full p-3 rounded-xl border border-gray-200 outline-none font-mono text-sm focus:ring-2 focus:ring-[#27ae60]"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              共 {codesText.split('\n').filter(c => c.trim()).length} 組
+            </p>
+          </div>
+          <button onClick={handleManualImport} disabled={importing || !codesText.trim()}
+            className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+            {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
+            {importing ? '匯入中...' : '確認匯入'}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center">
+            <FileUp className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm font-bold text-gray-600 mb-1">上傳 CSV 檔案</p>
+            <p className="text-xs text-gray-400 mb-3">需含「優惠碼」欄位，可選填：活動名稱、優惠方式、活動開始/結束時間、低銷金額</p>
+            <label className="cursor-pointer bg-[#27ae60] text-white text-sm font-bold px-4 py-2 rounded-xl inline-block">
+              選擇檔案
+              <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
+            </label>
+          </div>
+
+          {csvPreview.length > 0 && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
+              <p className="text-sm font-bold text-gray-700">預覽（共 {csvPreview.length} 組）</p>
+              <div className="max-h-48 overflow-y-auto space-y-1.5 rounded-xl border border-gray-100 p-3">
+                {csvPreview.slice(0, 20).map((item, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-1.5">
+                    <span className="font-mono font-bold text-gray-800">{item.code}</span>
+                    <div className="flex items-center gap-2 text-gray-400">
+                      {item.eventName && <span>{item.eventName}</span>}
+                      <span className="text-[#27ae60] font-bold">{COUPON_TYPES.find(t => t.value === item.type)?.label}</span>
+                    </div>
+                  </div>
+                ))}
+                {csvPreview.length > 20 && <p className="text-center text-xs text-gray-400 py-1">...還有 {csvPreview.length - 20} 組</p>}
+              </div>
+              <button onClick={() => runImport(csvPreview)} disabled={importing}
+                className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+                {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
+                {importing ? '匯入中...' : `確認匯入 ${csvPreview.length} 組`}
+              </button>
+            </motion.div>
+          )}
+        </>
+      )}
     </div>
   );
 };
 
 /* ─── Store Panel (wrapper with sub-nav) ────────────────────── */
-const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }) => {
+export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }) => {
   const [view, setView] = useState<StoreView>('menu');
 
   const menuItems = [

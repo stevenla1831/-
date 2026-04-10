@@ -3,6 +3,7 @@ import {
   collection, query, getDocs, setDoc, doc, updateDoc, deleteDoc,
   orderBy, limit, where,
 } from 'firebase/firestore';
+import { StorePanel } from './StoreDashboard';
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
   Search, CheckCircle2, Loader2, ChevronRight, ShieldCheck,
@@ -20,7 +21,7 @@ import { ROLES } from '../constants';
 type AdminView = 'menu' | 'stores' | 'userlist' | 'stats' | 'announce';
 
 /* ─── Store Management ──────────────────────────────────────── */
-const StoreManagement: React.FC = () => {
+const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -29,6 +30,7 @@ const StoreManagement: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [managingStore, setManagingStore] = useState<Store | null>(null);
 
   const fetchStores = useCallback(async () => {
     setLoading(true);
@@ -90,40 +92,52 @@ const StoreManagement: React.FC = () => {
 
   if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
 
+  // Show per-store management panel when selected
+  if (managingStore) {
+    return <StorePanel store={managingStore} onBack={() => setManagingStore(null)} currentUserUid={adminUid} />;
+  }
+
   return (
     <div className="p-6 space-y-4">
       {stores.map(store => {
         const active = store.isActive !== false;
         return (
-          <div key={store.id} className={`bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center transition-opacity ${active ? 'border-gray-100' : 'border-gray-100 opacity-60'}`}>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-gray-900">{store.name}</p>
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+          <div key={store.id} className={`bg-white p-4 rounded-xl border shadow-sm transition-opacity ${active ? 'border-gray-100' : 'border-gray-100 opacity-60'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <p className="font-bold text-gray-900 truncate">{store.name}</p>
+                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${active ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
                   {active ? '進行中' : '已暫停'}
                 </span>
               </div>
-              <p className="text-xs text-gray-400 mt-0.5">{store.description || '—'}</p>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => handleToggleActive(store)}
+                  disabled={togglingId === store.id}
+                  title={active ? '點擊暫停' : '點擊啟用'}
+                  className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${active ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:bg-gray-50'}`}
+                >
+                  {togglingId === store.id
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
+                </button>
+                <button
+                  onClick={() => handleDelete(store)}
+                  disabled={deletingId === store.id}
+                  className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {deletingId === store.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={() => handleToggleActive(store)}
-                disabled={togglingId === store.id}
-                title={active ? '點擊暫停' : '點擊啟用'}
-                className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${active ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:bg-gray-50'}`}
-              >
-                {togglingId === store.id
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
-              </button>
-              <button
-                onClick={() => handleDelete(store)}
-                disabled={deletingId === store.id}
-                className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-              >
-                {deletingId === store.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-              </button>
-            </div>
+            {store.description && <p className="text-xs text-gray-400 mb-2">{store.description}</p>}
+            <button
+              onClick={() => setManagingStore(store)}
+              className="w-full py-2 rounded-xl bg-[#f0fff4] border border-green-100 text-[#27ae60] text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-green-100 transition-colors"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+              進入庫存 / 贈送 / 統計 / 匯入
+            </button>
           </div>
         );
       })}
@@ -383,16 +397,23 @@ const UserList: React.FC = () => {
 /* ─── Announcement Management ────────────────────────────────── */
 const AnnouncementManagement: React.FC = () => {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [allStores, setAllStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
+  const [targetMode, setTargetMode] = useState<'all' | 'specific'>('all');
+  const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(query(collection(db, 'announcements'), orderBy('createdAt', 'desc')));
-      setAnnouncements(snap.docs.map(d => ({ ...d.data(), id: d.id } as Announcement)));
+      const [annSnap, storeSnap] = await Promise.all([
+        getDocs(query(collection(db, 'announcements'), orderBy('createdAt', 'desc'))),
+        getDocs(query(collection(db, 'stores'), orderBy('name'))),
+      ]);
+      setAnnouncements(annSnap.docs.map(d => ({ ...d.data(), id: d.id } as Announcement)));
+      setAllStores(storeSnap.docs.map(d => ({ ...d.data(), id: d.id } as Store)));
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, 'announcements');
     } finally {
@@ -404,13 +425,17 @@ const AnnouncementManagement: React.FC = () => {
 
   const handleAdd = async () => {
     if (!text.trim()) return;
+    if (targetMode === 'specific' && selectedStoreIds.length === 0) return;
     setSaving(true);
     try {
       const id = crypto.randomUUID();
       const now = Date.now();
-      const a: Announcement = { id, message: text.trim(), active: true, createdAt: now, updatedAt: now };
+      const storeIds: string[] | 'all' = targetMode === 'all' ? 'all' : selectedStoreIds;
+      const a: Announcement = { id, message: text.trim(), active: true, createdAt: now, updatedAt: now, storeIds };
       await setDoc(doc(db, 'announcements', id), a);
       setText('');
+      setTargetMode('all');
+      setSelectedStoreIds([]);
       setEditing(false);
       load();
     } catch (err) {
@@ -439,39 +464,48 @@ const AnnouncementManagement: React.FC = () => {
     }
   };
 
+  const storeLabel = (a: Announcement) => {
+    if (!a.storeIds || a.storeIds === 'all') return '全部商家';
+    const names = (a.storeIds as string[]).map(id => allStores.find(s => s.id === id)?.name ?? id);
+    return names.join('、');
+  };
+
   if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
 
   return (
     <div className="p-6 space-y-4">
       {announcements.map(a => (
         <div key={a.id} className={`bg-white p-4 rounded-xl border shadow-sm ${a.active ? 'border-[#27ae60]/30' : 'border-gray-100 opacity-60'}`}>
-          <p className="text-sm text-gray-800 leading-relaxed mb-3">{a.message}</p>
-          <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-800 leading-relaxed mb-2">{a.message}</p>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-500 border border-blue-100">
+              {storeLabel(a)}
+            </span>
             <span className="text-[10px] text-gray-400">{new Date(a.createdAt).toLocaleDateString()}</span>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleToggle(a)}
-                className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-lg transition-colors ${
-                  a.active ? 'text-green-600 bg-green-50' : 'text-gray-400 bg-gray-50'
-                }`}
-              >
-                {a.active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                {a.active ? '顯示中' : '已隱藏'}
-              </button>
-              <button
-                onClick={() => handleDelete(a)}
-                className="text-red-400 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => handleToggle(a)}
+              className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-lg transition-colors ${
+                a.active ? 'text-green-600 bg-green-50' : 'text-gray-400 bg-gray-50'
+              }`}
+            >
+              {a.active ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              {a.active ? '顯示中' : '已隱藏'}
+            </button>
+            <button
+              onClick={() => handleDelete(a)}
+              className="text-red-400 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       ))}
 
       {editing ? (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-5 rounded-2xl border-2 border-[#27ae60]/30 space-y-3 shadow-sm">
+          className="bg-white p-5 rounded-2xl border-2 border-[#27ae60]/30 space-y-4 shadow-sm">
           <textarea
             rows={3}
             value={text}
@@ -479,10 +513,44 @@ const AnnouncementManagement: React.FC = () => {
             placeholder="輸入公告內容..."
             className="w-full p-3 rounded-xl border border-gray-200 outline-none text-sm focus:ring-2 focus:ring-[#27ae60] resize-none"
           />
+
+          {/* Store targeting */}
+          <div>
+            <p className="text-xs font-bold text-gray-500 mb-2">公告對象</p>
+            <div className="flex gap-2 mb-3">
+              {(['all', 'specific'] as const).map(m => (
+                <button key={m} onClick={() => { setTargetMode(m); setSelectedStoreIds([]); }}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
+                    targetMode === m ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]' : 'border-gray-100 text-gray-400'
+                  }`}>
+                  {m === 'all' ? '全部商家' : '指定商家'}
+                </button>
+              ))}
+            </div>
+            {targetMode === 'specific' && (
+              <div className="space-y-1.5">
+                {allStores.map(s => {
+                  const sel = selectedStoreIds.includes(s.id);
+                  return (
+                    <button key={s.id}
+                      onClick={() => setSelectedStoreIds(prev => sel ? prev.filter(id => id !== s.id) : [...prev, s.id])}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl border-2 text-sm transition-all ${
+                        sel ? 'border-[#27ae60] bg-[#f0fff4]' : 'border-gray-100 hover:border-gray-200'
+                      }`}>
+                      <span className={`font-bold text-sm ${sel ? 'text-[#27ae60]' : 'text-gray-600'}`}>{s.name}</span>
+                      {sel && <CheckCircle2 className="w-4 h-4 text-[#27ae60]" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-2">
-            <button onClick={() => { setEditing(false); setText(''); }}
+            <button onClick={() => { setEditing(false); setText(''); setTargetMode('all'); setSelectedStoreIds([]); }}
               className="flex-1 py-2 rounded-xl border border-gray-200 text-gray-500 text-sm font-bold">取消</button>
-            <button onClick={handleAdd} disabled={saving || !text.trim()}
+            <button onClick={handleAdd}
+              disabled={saving || !text.trim() || (targetMode === 'specific' && selectedStoreIds.length === 0)}
               className="flex-1 py-2 rounded-xl bg-[#27ae60] text-white text-sm font-bold disabled:opacity-50">
               {saving ? '儲存中...' : '發布公告'}
             </button>
@@ -737,7 +805,7 @@ const AdminDashboard: React.FC<{ profile: UserProfile }> = ({ profile }) => {
         )}
         {view === 'stores' && (
           <motion.div key="stores" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <StoreManagement />
+            <StoreManagement adminUid={profile.uid} />
           </motion.div>
         )}
         {view === 'userlist' && (

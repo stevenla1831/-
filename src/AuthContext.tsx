@@ -17,10 +17,30 @@ const AuthContext = createContext<AuthContextType>({
   isAuthReady: false,
 });
 
+const PROFILE_CACHE_KEY = 'wdys_profile_v1';
+
+function loadCachedProfile(): UserProfile | null {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as UserProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveProfileCache(p: UserProfile) {
+  try { localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(p)); } catch {}
+}
+
+function clearProfileCache() {
+  try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch {}
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const cached = loadCachedProfile();
+  const [profile, setProfile] = useState<UserProfile | null>(cached);
+  const [loading, setLoading] = useState(!cached);
+  const [isAuthReady, setIsAuthReady] = useState(!!cached);
   const profileUnsub = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -29,6 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await liff.init({ liffId: LIFF_ID });
 
         if (!liff.isLoggedIn()) {
+          clearProfileCache();
           liff.login();
           return;
         }
@@ -45,7 +66,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           userDocRef,
           async (snap) => {
             if (snap.exists()) {
-              setProfile(snap.data() as UserProfile);
+              const p = snap.data() as UserProfile;
+              setProfile(p);
+              saveProfileCache(p);
             } else {
               const newProfile: UserProfile = {
                 uid: lineUserId,
@@ -56,6 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
               try {
                 await setDoc(userDocRef, newProfile);
+                saveProfileCache(newProfile);
               } catch (error) {
                 console.error('Failed to create user profile:', error);
               }
