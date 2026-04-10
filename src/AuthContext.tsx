@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { db } from './firebase';
 import { UserProfile } from './types';
 import liff from '@line/liff';
 import { LIFF_ID } from './constants';
@@ -54,14 +54,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               try {
                 await setDoc(userDocRef, newProfile);
               } catch (error) {
-                handleFirestoreError(error, OperationType.CREATE, `users/${lineUserId}`);
+                console.error('Failed to create user profile:', error);
               }
             }
             setLoading(false);
             setIsAuthReady(true);
           },
           (error) => {
-            handleFirestoreError(error, OperationType.GET, `users/${lineUserId}`);
+            console.error('Firestore snapshot error:', error);
             setLoading(false);
             setIsAuthReady(true);
           }
