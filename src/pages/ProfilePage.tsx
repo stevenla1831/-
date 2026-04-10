@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { Settings, LogOut, CheckCircle2, Phone, ChevronRight, Loader2, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
-import { auth, db, handleFirestoreError, OperationType } from '../firebase';
+import liff from '@line/liff';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
 import { ROLES } from '../constants';
 
@@ -130,7 +131,7 @@ const ProfilePage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
       {/* Actions */}
       <div className="space-y-2">
         <button
-          onClick={() => auth.signOut()}
+          onClick={() => liff.logout()}
           className="w-full bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between group hover:border-red-100 transition-colors"
         >
           <div className="flex items-center gap-3">

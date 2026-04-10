@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { auth, db, signInAnonymously, handleFirestoreError, OperationType } from './firebase';
+import { db, handleFirestoreError, OperationType } from './firebase';
 import { UserProfile } from './types';
 import liff from '@line/liff';
 import { LIFF_ID } from './constants';
@@ -36,10 +36,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const lineProfile = await liff.getProfile();
         const lineUserId = lineProfile.userId;
 
-        // Sign in anonymously to Firebase to satisfy Firestore security rules
-        await signInAnonymously(auth);
-
-        // Use LINE userId as Firestore document key
         const userDocRef = doc(db, 'users', lineUserId);
 
         profileUnsub.current = onSnapshot(
