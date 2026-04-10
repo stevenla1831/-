@@ -1,89 +1,91 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import { auth, db, signInAnonymously, handleFirestoreError, OperationType } from './firebase';
 import { UserProfile } from './types';
+import liff from '@line/liff';
+import { LIFF_ID } from './constants';
 
 interface AuthContextType {
-  user: FirebaseUser | null;
   profile: UserProfile | null;
   loading: boolean;
   isAuthReady: boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({
-  user: null,
   profile: null,
   loading: true,
   isAuthReady: false,
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  // Hold reference to the Firestore profile listener so we can unsubscribe
   const profileUnsub = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      // Tear down any previous profile listener
-      profileUnsub.current?.();
-      profileUnsub.current = null;
+    const initAuth = async () => {
+      try {
+        await liff.init({ liffId: LIFF_ID });
 
-      setUser(firebaseUser);
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
 
-      if (firebaseUser) {
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const lineProfile = await liff.getProfile();
+        const lineUserId = lineProfile.userId;
 
-        // Subscribe to real-time profile updates so any write (e.g. phone binding,
-        // role change by admin) is immediately reflected throughout the app.
+        // Sign in anonymously to Firebase to satisfy Firestore security rules
+        await signInAnonymously(auth);
+
+        // Use LINE userId as Firestore document key
+        const userDocRef = doc(db, 'users', lineUserId);
+
         profileUnsub.current = onSnapshot(
           userDocRef,
           async (snap) => {
             if (snap.exists()) {
               setProfile(snap.data() as UserProfile);
             } else {
-              // First-ever login: create the user document
               const newProfile: UserProfile = {
-                uid: firebaseUser.uid,
-                displayName: firebaseUser.displayName || 'Anonymous',
-                photoURL: firebaseUser.photoURL || '',
+                uid: lineUserId,
+                displayName: lineProfile.displayName,
+                photoURL: lineProfile.pictureUrl || '',
                 role: 'user',
                 createdAt: Date.now(),
               };
               try {
                 await setDoc(userDocRef, newProfile);
-                // onSnapshot will fire again with the new doc — no need to setProfile here
               } catch (error) {
-                handleFirestoreError(error, OperationType.CREATE, `users/${firebaseUser.uid}`);
+                handleFirestoreError(error, OperationType.CREATE, `users/${lineUserId}`);
               }
             }
             setLoading(false);
             setIsAuthReady(true);
           },
           (error) => {
-            handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+            handleFirestoreError(error, OperationType.GET, `users/${lineUserId}`);
             setLoading(false);
             setIsAuthReady(true);
           }
         );
-      } else {
-        setProfile(null);
+      } catch (err) {
+        console.error('Auth init error:', err);
         setLoading(false);
         setIsAuthReady(true);
       }
-    });
+    };
+
+    initAuth();
 
     return () => {
-      unsubAuth();
       profileUnsub.current?.();
     };
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAuthReady }}>
+    <AuthContext.Provider value={{ profile, loading, isAuthReady }}>
       {children}
     </AuthContext.Provider>
   );

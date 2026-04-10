@@ -1,10 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Gift, Ticket, User, LayoutDashboard, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import liff from '@line/liff';
 import { useAuth } from './AuthContext';
-import { auth } from './firebase';
-import { LIFF_ID } from './constants';
 
 import DrawPage from './pages/DrawPage';
 import MyCouponsPage from './pages/MyCouponsPage';
@@ -34,17 +31,7 @@ const LoginScreen = () => (
         <Gift className="w-10 h-10 text-[#27ae60]" />
       </div>
       <h1 className="text-3xl font-black text-gray-900 mb-3 tracking-tight">白日衣衫淨</h1>
-      <p className="text-gray-400 mb-10 leading-relaxed text-sm">歡迎來到抽獎系統，請登入以開始您的幸運之旅。</p>
-      <button
-        onClick={() => {
-          import('./firebase').then(({ googleProvider, signInWithPopup, auth: a }) => {
-            signInWithPopup(a, googleProvider);
-          });
-        }}
-        className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold text-lg shadow-[0_8px_20px_rgba(39,174,96,0.3)] hover:translate-y-[-2px] active:scale-95 transition-all"
-      >
-        登入系統
-      </button>
+      <p className="text-gray-400 leading-relaxed text-sm">正在透過 LINE 驗證身份，請稍候…</p>
     </div>
   </div>
 );
@@ -90,10 +77,6 @@ const Navbar = ({
 export default function App() {
   const { profile, loading, isAuthReady } = useAuth();
   const [activeTab, setActiveTab] = useState('draw');
-
-  useEffect(() => {
-    liff.init({ liffId: LIFF_ID }).catch(err => console.error('LIFF Init Error:', err));
-  }, []);
 
   if (!isAuthReady || loading) return <LoadingScreen />;
   if (!profile) return <LoginScreen />;
