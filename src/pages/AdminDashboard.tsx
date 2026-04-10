@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   collection, query, getDocs, setDoc, doc, updateDoc, deleteDoc,
-  orderBy, limit, getDoc, where,
+  orderBy, limit, where,
 } from 'firebase/firestore';
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
-  Search, CheckCircle2, AlertCircle, Loader2, ChevronRight, ShieldCheck,
+  Search, CheckCircle2, Loader2, ChevronRight, ShieldCheck,
   ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -17,7 +17,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Store, UserProfile, DrawRecord, Coupon, UserRole, Announcement } from '../types';
 import { ROLES } from '../constants';
 
-type AdminView = 'menu' | 'stores' | 'users' | 'userlist' | 'stats' | 'announce';
+type AdminView = 'menu' | 'stores' | 'userlist' | 'stats' | 'announce';
 
 /* ─── Store Management ──────────────────────────────────────── */
 const StoreManagement: React.FC = () => {
@@ -171,162 +171,7 @@ const StoreManagement: React.FC = () => {
   );
 };
 
-/* ─── User Management ────────────────────────────────────────── */
-const UserManagement: React.FC = () => {
-  const [search, setSearch] = useState('');
-  const [foundUser, setFoundUser] = useState<UserProfile | null>(null);
-  const [allStores, setAllStores] = useState<Store[]>([]);
-  const [updating, setUpdating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getDocs(query(collection(db, 'stores'), orderBy('name'))).then(snap => {
-      setAllStores(snap.docs.map(d => ({ ...d.data(), id: d.id } as Store)));
-    });
-  }, []);
-
-  const handleSearch = async () => {
-    if (!search.trim()) return;
-    setError(null);
-    setFoundUser(null);
-    try {
-      // Try UID first
-      const byUID = await getDoc(doc(db, 'users', search.trim()));
-      if (byUID.exists()) { setFoundUser(byUID.data() as UserProfile); return; }
-      // Try display name
-      const byName = query(collection(db, 'users'), where('displayName', '==', search.trim()), limit(1));
-      const byNameSnap = await getDocs(byName);
-      if (!byNameSnap.empty) { setFoundUser(byNameSnap.docs[0].data() as UserProfile); return; }
-      // Try phone
-      const byPhone = query(collection(db, 'users'), where('phoneNumber', '==', search.trim()), limit(1));
-      const byPhoneSnap = await getDocs(byPhone);
-      if (!byPhoneSnap.empty) { setFoundUser(byPhoneSnap.docs[0].data() as UserProfile); return; }
-      setError('找不到該用戶');
-    } catch (err) {
-      handleFirestoreError(err, OperationType.GET, 'users');
-    }
-  };
-
-  const updateRole = async (newRole: UserRole) => {
-    if (!foundUser) return;
-    setUpdating(true);
-    try {
-      await updateDoc(doc(db, 'users', foundUser.uid), { role: newRole });
-      setFoundUser({ ...foundUser, role: newRole });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${foundUser.uid}`);
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  const toggleStoreAssignment = async (storeId: string) => {
-    if (!foundUser) return;
-    const current = foundUser.assignedStores ?? [];
-    const updated = current.includes(storeId)
-      ? current.filter(id => id !== storeId)
-      : [...current, storeId];
-    setUpdating(true);
-    try {
-      await updateDoc(doc(db, 'users', foundUser.uid), { assignedStores: updated });
-      setFoundUser({ ...foundUser, assignedStores: updated });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${foundUser.uid}`);
-    } finally {
-      setUpdating(false);
-    }
-  };
-
-  return (
-    <div className="p-6 space-y-6">
-      {/* Search bar */}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          placeholder="LINE 名稱 / 手機 / UID"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSearch()}
-          className="flex-1 p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#27ae60] outline-none text-sm"
-        />
-        <button onClick={handleSearch} className="bg-[#27ae60] text-white p-3 rounded-xl">
-          <Search className="w-5 h-5" />
-        </button>
-      </div>
-
-      {error && (
-        <p className="text-red-500 text-sm flex items-center gap-2">
-          <AlertCircle className="w-4 h-4" />{error}
-        </p>
-      )}
-
-      {foundUser && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-5">
-          {/* User info */}
-          <div className="flex items-center gap-4">
-            <img src={foundUser.photoURL || '/placeholder.png'} alt="" className="w-14 h-14 rounded-full border-2 border-gray-50" />
-            <div>
-              <p className="font-bold text-gray-900">{foundUser.displayName}</p>
-              <p className="text-xs text-gray-400">{foundUser.phoneNumber || '未綁定手機'}</p>
-              <p className="text-[10px] text-gray-300 mt-0.5">UID: {foundUser.uid.slice(0, 20)}...</p>
-            </div>
-          </div>
-
-          {/* Role selector */}
-          <div>
-            <p className="text-xs font-bold text-gray-500 mb-2">帳號權限</p>
-            <div className="grid grid-cols-3 gap-2">
-              {ROLES.map(role => (
-                <button
-                  key={role.value}
-                  onClick={() => updateRole(role.value as UserRole)}
-                  disabled={updating}
-                  className={`py-2 rounded-xl text-xs font-bold transition-all ${
-                    foundUser.role === role.value
-                      ? 'bg-[#27ae60] text-white shadow-sm'
-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                  }`}
-                >
-                  {role.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Store assignment (only relevant for store role) */}
-          {(foundUser.role === 'store' || foundUser.role === 'admin') && (
-            <div>
-              <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" />指派管理店家
-              </p>
-              <div className="space-y-2">
-                {allStores.map(store => {
-                  const assigned = (foundUser.assignedStores ?? []).includes(store.id);
-                  return (
-                    <button
-                      key={store.id}
-                      onClick={() => toggleStoreAssignment(store.id)}
-                      disabled={updating}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border-2 text-sm transition-all ${
-                        assigned ? 'border-[#27ae60] bg-[#f0fff4]' : 'border-gray-100 hover:border-gray-200'
-                      }`}
-                    >
-                      <span className={`font-bold ${assigned ? 'text-[#27ae60]' : 'text-gray-600'}`}>{store.name}</span>
-                      {assigned && <CheckCircle2 className="w-4 h-4 text-[#27ae60]" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </motion.div>
-      )}
-    </div>
-  );
-};
-
-/* ─── User List ──────────────────────────────────────────────── */
+/* ─── User List (with inline permission editing) ─────────────── */
 const ROLE_BADGE: Record<string, string> = {
   admin: 'bg-red-50 text-red-600 border-red-100',
   store: 'bg-purple-50 text-purple-600 border-purple-100',
@@ -335,16 +180,53 @@ const ROLE_BADGE: Record<string, string> = {
 
 const UserList: React.FC = () => {
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [allStores, setAllStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterRole, setFilterRole] = useState<'all' | UserRole>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [expandedUid, setExpandedUid] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
-    getDocs(query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(200)))
-      .then(snap => setUsers(snap.docs.map(d => d.data() as UserProfile)))
+    Promise.all([
+      getDocs(query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(200))),
+      getDocs(query(collection(db, 'stores'), orderBy('name'))),
+    ])
+      .then(([userSnap, storeSnap]) => {
+        setUsers(userSnap.docs.map(d => d.data() as UserProfile));
+        setAllStores(storeSnap.docs.map(d => ({ ...d.data(), id: d.id } as Store)));
+      })
       .catch(err => handleFirestoreError(err, OperationType.LIST, 'users'))
       .finally(() => setLoading(false));
   }, []);
+
+  const updateRole = async (user: UserProfile, newRole: UserRole) => {
+    setUpdating(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), { role: newRole });
+      setUsers(prev => prev.map(u => u.uid === user.uid ? { ...u, role: newRole } : u));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const toggleStoreAssignment = async (user: UserProfile, storeId: string) => {
+    const current = user.assignedStores ?? [];
+    const updated = current.includes(storeId)
+      ? current.filter(id => id !== storeId)
+      : [...current, storeId];
+    setUpdating(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), { assignedStores: updated });
+      setUsers(prev => prev.map(u => u.uid === user.uid ? { ...u, assignedStores: updated } : u));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const filtered = users.filter(u => {
     if (filterRole !== 'all' && u.role !== filterRole) return false;
@@ -400,24 +282,96 @@ const UserList: React.FC = () => {
 
       {/* List */}
       <div className="space-y-2">
-        {filtered.map(u => (
-          <div key={u.uid} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center gap-3">
-            <img
-              src={u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.displayName)}&background=27ae60&color=fff&size=40`}
-              alt=""
-              className="w-10 h-10 rounded-full shrink-0 border border-gray-100"
-            />
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-gray-900 text-sm truncate">{u.displayName}</p>
-              <p className="text-[10px] text-gray-400 truncate">
-                {u.phoneNumber || '—'} · {new Date(u.createdAt).toLocaleDateString()}
-              </p>
+        {filtered.map(u => {
+          const isExpanded = expandedUid === u.uid;
+          return (
+            <div key={u.uid} className={`bg-white rounded-xl border shadow-sm transition-all ${isExpanded ? 'border-[#27ae60]/40' : 'border-gray-100'}`}>
+              {/* Row */}
+              <button
+                onClick={() => setExpandedUid(isExpanded ? null : u.uid)}
+                className="w-full flex items-center gap-3 p-4"
+              >
+                <img
+                  src={u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.displayName)}&background=27ae60&color=fff&size=40`}
+                  alt=""
+                  className={`w-10 h-10 rounded-full shrink-0 border-2 transition-all ${isExpanded ? 'border-[#27ae60]' : 'border-gray-100'}`}
+                />
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="font-bold text-gray-900 text-sm truncate">{u.displayName}</p>
+                  <p className="text-[10px] text-gray-400 truncate">
+                    {u.phoneNumber || '—'} · {new Date(u.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${ROLE_BADGE[u.role] ?? ROLE_BADGE.user}`}>
+                  {ROLES.find(r => r.value === u.role)?.label ?? u.role}
+                </span>
+              </button>
+
+              {/* Inline edit panel */}
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="px-4 pb-4 space-y-4 border-t border-gray-50 pt-3">
+                      {/* Role selector */}
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 mb-2">帳號權限</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {ROLES.map(role => (
+                            <button
+                              key={role.value}
+                              onClick={() => updateRole(u, role.value as UserRole)}
+                              disabled={updating}
+                              className={`py-2 rounded-xl text-xs font-bold transition-all ${
+                                u.role === role.value
+                                  ? 'bg-[#27ae60] text-white shadow-sm'
+                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                              }`}
+                            >
+                              {role.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Store assignment */}
+                      {(u.role === 'store' || u.role === 'admin') && (
+                        <div>
+                          <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5" />指派管理店家
+                          </p>
+                          <div className="space-y-1.5">
+                            {allStores.map(store => {
+                              const assigned = (u.assignedStores ?? []).includes(store.id);
+                              return (
+                                <button
+                                  key={store.id}
+                                  onClick={() => toggleStoreAssignment(u, store.id)}
+                                  disabled={updating}
+                                  className={`w-full flex items-center justify-between p-3 rounded-xl border-2 text-sm transition-all ${
+                                    assigned ? 'border-[#27ae60] bg-[#f0fff4]' : 'border-gray-100 hover:border-gray-200'
+                                  }`}
+                                >
+                                  <span className={`font-bold text-sm ${assigned ? 'text-[#27ae60]' : 'text-gray-600'}`}>{store.name}</span>
+                                  {assigned && <CheckCircle2 className="w-4 h-4 text-[#27ae60]" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${ROLE_BADGE[u.role] ?? ROLE_BADGE.user}`}>
-              {ROLES.find(r => r.value === u.role)?.label ?? u.role}
-            </span>
-          </div>
-        ))}
+          );
+        })}
         {filtered.length === 0 && (
           <p className="text-center text-gray-300 py-8 text-sm">找不到符合的用戶</p>
         )}
@@ -741,8 +695,7 @@ const AdminDashboard: React.FC<{ profile: UserProfile }> = ({ profile }) => {
 
   const menuItems = [
     { id: 'stores' as AdminView, label: '店家管理', sublabel: '新增 / 刪除 / 暫停店家', icon: StoreIcon, color: 'text-blue-500' },
-    { id: 'users' as AdminView, label: '帳號管理', sublabel: '搜尋 & 權限設定', icon: Users, color: 'text-purple-500' },
-    { id: 'userlist' as AdminView, label: '用戶列表', sublabel: '瀏覽所有用戶', icon: Users, color: 'text-teal-500' },
+    { id: 'userlist' as AdminView, label: '用戶列表', sublabel: '瀏覽用戶 & 點擊設定權限', icon: Users, color: 'text-purple-500' },
     { id: 'stats' as AdminView, label: '跨店統計', sublabel: '圖表 & 數據匯出', icon: BarChart2, color: 'text-orange-500' },
     { id: 'announce' as AdminView, label: '公告管理', sublabel: '設定抽獎頁公告', icon: Megaphone, color: 'text-pink-500' },
   ];
@@ -785,11 +738,6 @@ const AdminDashboard: React.FC<{ profile: UserProfile }> = ({ profile }) => {
         {view === 'stores' && (
           <motion.div key="stores" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <StoreManagement />
-          </motion.div>
-        )}
-        {view === 'users' && (
-          <motion.div key="users" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <UserManagement />
           </motion.div>
         )}
         {view === 'userlist' && (

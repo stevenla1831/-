@@ -46,7 +46,7 @@ const QRModal: React.FC<{
         </div>
         <div className="flex justify-center mb-5">
           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-            <QRCodeSVG value={coupon.code} size={180} fgColor="#1a1a1a" />
+            <QRCodeSVG value={coupon.code} size={260} fgColor="#1a1a1a" />
           </div>
         </div>
         <div className="bg-[#f0fff4] border border-green-100 rounded-2xl p-4 mb-4">

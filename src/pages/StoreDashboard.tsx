@@ -4,14 +4,14 @@ import {
 } from 'firebase/firestore';
 import {
   Package, Gift, BarChart2, FileUp, ChevronRight, Search, CheckCircle2,
-  AlertCircle, Loader2, ArrowLeft, Users, ScanLine,
+  AlertCircle, Loader2, ArrowLeft, Users,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Store, Coupon, UserProfile, DrawRecord } from '../types';
 import { COUPON_TYPES, getISOWeekKey } from '../constants';
 
-type StoreView = 'menu' | 'inventory' | 'gift' | 'stats' | 'import' | 'verify';
+type StoreView = 'menu' | 'inventory' | 'gift' | 'stats' | 'import';
 
 interface StorePanelProps {
   store: Store;
@@ -418,153 +418,11 @@ const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
   );
 };
 
-/* ─── Verify Coupon ──────────────────────────────────────────── */
-const VerifyPanel: React.FC<{ store: Store }> = ({ store }) => {
-  const [code, setCode] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [found, setFound] = useState<Coupon | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [marking, setMarking] = useState(false);
-  const [success, setSuccess] = useState(false);
-
-  const handleSearch = async () => {
-    const trimmed = code.trim().toUpperCase();
-    if (!trimmed) return;
-    setSearching(true);
-    setFound(null);
-    setError(null);
-    setSuccess(false);
-    try {
-      const q = query(
-        collection(db, 'coupons'),
-        where('storeId', '==', store.id),
-        where('code', '==', trimmed),
-        limit(1)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        setError('找不到此序號，請確認是否屬於本店家。');
-      } else {
-        setFound({ ...snap.docs[0].data(), id: snap.docs[0].id } as Coupon);
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'coupons');
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const handleMarkUsed = async () => {
-    if (!found || found.status !== 'assigned') return;
-    setMarking(true);
-    try {
-      await updateDoc(doc(db, 'coupons', found.id), { status: 'used', usedAt: Date.now() });
-      setFound({ ...found, status: 'used', usedAt: Date.now() });
-      setSuccess(true);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `coupons/${found.id}`);
-    } finally {
-      setMarking(false);
-    }
-  };
-
-  const statusBadge = (status: string) => {
-    if (status === 'available') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100">未派發</span>;
-    if (status === 'assigned') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">待使用</span>;
-    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-50 text-gray-400 border border-gray-100">已使用</span>;
-  };
-
-  return (
-    <div className="p-6 space-y-5">
-      {success && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          className="bg-green-50 border border-green-200 rounded-2xl p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
-          <p className="text-sm font-bold text-green-700">核銷成功！序號已標記為已使用。</p>
-        </motion.div>
-      )}
-
-      <div>
-        <label className="block text-sm font-bold text-gray-700 mb-2">輸入序號進行驗證</label>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={code}
-            onChange={e => setCode(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === 'Enter' && handleSearch()}
-            placeholder="例如：ABC12345"
-            className="flex-1 p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-[#27ae60] outline-none text-sm font-mono tracking-widest uppercase"
-          />
-          <button
-            onClick={handleSearch}
-            disabled={searching || !code.trim()}
-            className="bg-[#27ae60] text-white p-3 rounded-xl disabled:opacity-50"
-          >
-            {searching ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <p className="text-red-500 text-sm flex items-center gap-2">
-          <AlertCircle className="w-4 h-4" />{error}
-        </p>
-      )}
-
-      {found && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-gray-400 mb-1">序號</p>
-              <p className="text-2xl font-black font-mono tracking-widest text-gray-900">{found.code}</p>
-            </div>
-            {statusBadge(found.status)}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 text-sm text-gray-500">
-            <div>
-              <p className="text-xs font-bold text-gray-400">類型</p>
-              <p className="font-bold text-gray-700 mt-0.5">
-                {COUPON_TYPES.find(t => t.value === found.type)?.label ?? found.type}
-              </p>
-            </div>
-            {found.assignedAt && (
-              <div>
-                <p className="text-xs font-bold text-gray-400">派發時間</p>
-                <p className="font-bold text-gray-700 mt-0.5">{new Date(found.assignedAt).toLocaleDateString()}</p>
-              </div>
-            )}
-          </div>
-
-          {found.status === 'assigned' && (
-            <button
-              onClick={handleMarkUsed}
-              disabled={marking}
-              className="w-full bg-[#27ae60] text-white py-3 rounded-2xl font-bold text-sm shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {marking ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {marking ? '核銷中...' : '確認核銷（標記已使用）'}
-            </button>
-          )}
-          {found.status === 'used' && (
-            <p className="text-center text-sm text-gray-400 py-2">此序號已於 {found.usedAt ? new Date(found.usedAt).toLocaleDateString() : '—'} 使用</p>
-          )}
-          {found.status === 'available' && (
-            <p className="text-center text-sm text-orange-500 py-2">此序號尚未派發給任何用戶</p>
-          )}
-        </motion.div>
-      )}
-    </div>
-  );
-};
-
 /* ─── Store Panel (wrapper with sub-nav) ────────────────────── */
 const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }) => {
   const [view, setView] = useState<StoreView>('menu');
 
   const menuItems = [
-    { id: 'verify' as StoreView, label: '驗證核銷', icon: ScanLine, color: 'text-[#27ae60]' },
     { id: 'inventory' as StoreView, label: '庫存管理', icon: Package, color: 'text-blue-500' },
     { id: 'gift' as StoreView, label: '贈送優惠碼', icon: Gift, color: 'text-purple-500' },
     { id: 'stats' as StoreView, label: '抽獎統計', icon: BarChart2, color: 'text-orange-500' },
@@ -589,18 +447,8 @@ const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }
         {view === 'menu' && (
           <motion.div key="menu" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="p-6 space-y-4">
-            {/* Verify — full width, highlighted */}
-            <button onClick={() => setView('verify')}
-              className="w-full bg-[#f0fff4] border-2 border-[#27ae60]/30 p-5 rounded-2xl shadow-sm flex items-center gap-4 hover:border-[#27ae60]/60 transition-colors">
-              <ScanLine className="w-8 h-8 text-[#27ae60] shrink-0" />
-              <div className="text-left">
-                <p className="font-bold text-gray-900">驗證核銷</p>
-                <p className="text-xs text-gray-400">輸入序號查詢並核銷優惠券</p>
-              </div>
-            </button>
-            {/* Other 4 items in 2-col grid */}
-            <div className="grid grid-cols-2 gap-4">
-              {menuItems.slice(1).map(item => (
+              <div className="grid grid-cols-2 gap-4">
+              {menuItems.map(item => (
                 <button key={item.id} onClick={() => setView(item.id)}
                   className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center gap-3 hover:border-gray-200 transition-colors">
                   <item.icon className={`w-8 h-8 ${item.color}`} />
@@ -628,11 +476,6 @@ const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }
         {view === 'import' && (
           <motion.div key="import" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <ImportPanel store={store} />
-          </motion.div>
-        )}
-        {view === 'verify' && (
-          <motion.div key="verify" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <VerifyPanel store={store} />
           </motion.div>
         )}
       </AnimatePresence>

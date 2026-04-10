@@ -120,7 +120,7 @@ const ResultCard: React.FC<{ coupon: Coupon; storeName: string; onBack: () => vo
             className="flex justify-center mb-4"
           >
             <div className="p-3 bg-white border border-gray-100 rounded-2xl shadow-sm">
-              <QRCodeSVG value={coupon.code} size={160} fgColor="#1a1a1a" />
+              <QRCodeSVG value={coupon.code} size={240} fgColor="#1a1a1a" />
             </div>
           </motion.div>
         )}
