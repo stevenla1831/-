@@ -379,8 +379,9 @@ const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
   const [result, setResult] = useState<{ success: number; dupes: number } | null>(null);
 
   // CSV column header index mapping
+  // Note: '序列號' removed from code keys — in many CSVs it's a row counter, not the coupon code
   const COL = {
-    code: ['優惠碼', 'code', '序列號'],
+    code: ['優惠碼', 'code', 'coupon'],
     type: ['優惠方式', 'type'],
     event: ['活動名稱', 'event'],
     from: ['活動開始時間', 'start'],
@@ -418,17 +419,39 @@ const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
     setCsvPreview(items);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Try UTF-8 first; if Chinese characters look garbled, fall back to Big5
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      processCSVText(text);
-    };
-    reader.readAsText(file, 'UTF-8');
     e.target.value = '';
+
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    let text: string;
+    // Check for UTF-8 BOM (EF BB BF)
+    if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      text = new TextDecoder('UTF-8').decode(buffer);
+    } else {
+      // Decode as UTF-8 and check if the first line contains valid Chinese or known keywords
+      const utf8 = new TextDecoder('UTF-8').decode(buffer).replace(/^\ufeff/, '');
+      const firstLine = utf8.split(/\r?\n/)[0] ?? '';
+      // Valid CJK characters are U+4E00–U+9FFF; garbled Big5 shows non-CJK junk
+      const hasChinese = /[\u4e00-\u9fff]/.test(firstLine);
+      const hasEnglishKeyword = /code|coupon|start|end|type/i.test(firstLine);
+      if (hasChinese || hasEnglishKeyword) {
+        // Looks like valid UTF-8
+        text = utf8;
+      } else {
+        // Fallback: try Big5 (Windows Traditional Chinese Excel export without BOM)
+        try {
+          text = new TextDecoder('big5').decode(buffer);
+        } catch {
+          text = utf8; // give up and use UTF-8
+        }
+      }
+    }
+
+    processCSVText(text);
   };
 
   const runImport = async (items: { code: string; type: string; eventName?: string; validFrom?: number; validTo?: number; minAmount?: number }[]) => {
