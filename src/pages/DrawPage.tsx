@@ -3,11 +3,11 @@ import {
   collection, query, where, getDocs, addDoc, doc,
   orderBy, limit, runTransaction,
 } from 'firebase/firestore';
-import { Gift, Store as StoreIcon, AlertCircle, Loader2, Sparkles, Megaphone, X, CheckCircle2 } from 'lucide-react';
+import { Gift, Store as StoreIcon, AlertCircle, Loader2, Sparkles, Megaphone, X, CheckCircle2, Timer, RefreshCw, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Store, Coupon, DrawRecord, UserProfile, Announcement } from '../types';
+import { Store, Coupon, DrawRecord, UserProfile, Announcement, CouponBatch } from '../types';
 import { COUPON_TYPES, getISOWeekKey, weeklyDrawDocId } from '../constants';
 
 /* ─── Slot Machine Animation ─────────────────────────────────── */
@@ -138,6 +138,118 @@ const ResultCard: React.FC<{ coupon: Coupon; storeName: string; onBack: () => vo
   );
 };
 
+/* ─── Batch Info Section ─────────────────────────────────────── */
+const fmtMs = (ms: number) => {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+};
+
+const BatchInfoSection: React.FC<{
+  batches: CouponBatch[];
+  countdownMs: number | null;
+  userDrawCount: number;
+  lastDrawTime: number | null;
+}> = ({ batches, countdownMs, userDrawCount, lastDrawTime }) => {
+  if (batches.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      {batches.map(batch => {
+        const r = batch.drawRule;
+
+        /* ── 倒數計時 ── */
+        if (r.type === 'countdown') {
+          const started = !!batch.countdownStartedAt;
+          const active = started && countdownMs !== null && countdownMs > 0;
+          const ended = started && countdownMs === 0;
+          return (
+            <motion.div key={batch.id} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+              className={`rounded-2xl p-4 border ${active ? 'bg-orange-50 border-orange-200' : ended ? 'bg-gray-50 border-gray-100' : 'bg-amber-50 border-amber-100'}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Timer className={`w-4 h-4 ${active ? 'text-orange-500' : 'text-gray-400'}`} />
+                <span className="text-xs font-bold text-gray-500">倒數計時抽獎・{batch.name}</span>
+              </div>
+              {!started && <p className="text-sm font-bold text-amber-600">等待商家開啟抽獎視窗…</p>}
+              {active && (
+                <p className="text-3xl font-black text-orange-500 tracking-widest font-mono">{fmtMs(countdownMs!)}</p>
+              )}
+              {ended && <p className="text-sm font-bold text-gray-400">本次抽獎視窗已結束</p>}
+            </motion.div>
+          );
+        }
+
+        /* ── 循環式 ── */
+        if (r.type === 'cycle') {
+          const cooldownMs = (r.intervalDays ?? 7) * 86400000;
+          const nextAvailableMs = lastDrawTime ? lastDrawTime + cooldownMs : null;
+          const canDraw = !nextAvailableMs || Date.now() >= nextAvailableMs;
+          const remainMs = nextAvailableMs ? Math.max(0, nextAvailableMs - Date.now()) : 0;
+          const remainDays = Math.ceil(remainMs / 86400000);
+
+          let limitLabel = '';
+          if (r.cycleLimitCount) limitLabel += `・最多 ${r.cycleLimitCount} 次`;
+          if (r.cycleEndDate) limitLabel += `・截止 ${new Date(r.cycleEndDate).toLocaleDateString()}`;
+
+          return (
+            <motion.div key={batch.id} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+              className={`rounded-2xl p-4 border ${canDraw ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <RefreshCw className={`w-4 h-4 ${canDraw ? 'text-blue-500' : 'text-gray-400'}`} />
+                <span className="text-xs font-bold text-gray-500">循環式抽獎・{batch.name}</span>
+              </div>
+              <p className="text-sm font-bold text-gray-700">
+                每 {r.intervalDays ?? 7} 天可抽一次{limitLabel}
+              </p>
+              {canDraw
+                ? <p className="text-xs text-blue-600 font-bold mt-1">✓ 現在可以抽獎！</p>
+                : <p className="text-xs text-gray-400 mt-1">還需等待 {remainDays} 天才能再抽</p>}
+            </motion.div>
+          );
+        }
+
+        /* ── 里程碑（集點卡） ── */
+        if (r.type === 'milestone') {
+          const trigger = r.milestoneTrigger ?? 5;
+          const bonus = r.milestoneBonusDraws ?? 1;
+          const progress = userDrawCount % trigger;
+          const remaining = trigger - progress;
+          return (
+            <motion.div key={batch.id} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-2xl p-4 border bg-purple-50 border-purple-200">
+              <div className="flex items-center gap-2 mb-2">
+                <Star className="w-4 h-4 text-purple-500" />
+                <span className="text-xs font-bold text-gray-500">集點卡・{batch.name}</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-2">每抽 {trigger} 次可獲得 {bonus} 次額外抽獎機會</p>
+              <div className="flex gap-1.5 flex-wrap mb-2">
+                {Array.from({ length: trigger }).map((_, i) => (
+                  <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black border-2 transition-all ${
+                    i < progress
+                      ? 'bg-purple-500 border-purple-500 text-white'
+                      : 'bg-white border-purple-200 text-purple-300'
+                  }`}>
+                    {i < progress ? '★' : i + 1}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-purple-600 font-bold">
+                {progress === 0 ? `再抽 ${trigger} 次可送 ${bonus} 次！` : `再抽 ${remaining} 次可送 ${bonus} 次！`}
+              </p>
+            </motion.div>
+          );
+        }
+
+        return null;
+      })}
+    </div>
+  );
+};
+
 /* ─── Main DrawPage ───────────────────────────────────────────── */
 const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
   const [stores, setStores] = useState<Store[]>([]);
@@ -148,6 +260,44 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
   const [error, setError] = useState<string | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+
+  // Batch-related state
+  const [activeBatches, setActiveBatches] = useState<CouponBatch[]>([]);
+  const [userDrawCount, setUserDrawCount] = useState(0);
+  const [lastDrawTime, setLastDrawTime] = useState<number | null>(null);
+  const [countdownMs, setCountdownMs] = useState<number | null>(null);
+
+  // Fetch batches + user draw history when store selected
+  useEffect(() => {
+    if (!selectedStore) { setActiveBatches([]); setUserDrawCount(0); setLastDrawTime(null); return; }
+    let cancelled = false;
+    const fetch = async () => {
+      try {
+        const [batchSnap, drawSnap] = await Promise.all([
+          getDocs(query(collection(db, 'couponBatches'), where('storeId', '==', selectedStore.id))),
+          getDocs(query(collection(db, 'drawRecords'), where('userId', '==', profile.uid), where('storeId', '==', selectedStore.id), orderBy('timestamp', 'desc'))),
+        ]);
+        if (cancelled) return;
+        setActiveBatches(batchSnap.docs.map(d => ({ ...d.data(), id: d.id } as CouponBatch)));
+        const draws = drawSnap.docs.map(d => d.data() as DrawRecord);
+        setUserDrawCount(draws.length);
+        setLastDrawTime(draws[0]?.timestamp ?? null);
+      } catch { /* non-critical */ }
+    };
+    fetch();
+    return () => { cancelled = true; };
+  }, [selectedStore, profile.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live countdown ticker
+  useEffect(() => {
+    const cdBatch = activeBatches.find(b => b.drawRule.type === 'countdown' && b.countdownStartedAt);
+    if (!cdBatch?.countdownStartedAt) { setCountdownMs(null); return; }
+    const endMs = cdBatch.countdownStartedAt + (cdBatch.drawRule.countdownSeconds ?? 0) * 1000;
+    const tick = () => setCountdownMs(Math.max(0, endMs - Date.now()));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [activeBatches]);
 
   useEffect(() => {
     const fetchStores = async () => {
@@ -386,6 +536,19 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
           </div>
         </div>
 
+        {/* Batch info for selected store */}
+        <AnimatePresence>
+          {selectedStore && activeBatches.length > 0 && (
+            <motion.div key="batch-info" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+              <BatchInfoSection
+                batches={activeBatches}
+                countdownMs={countdownMs}
+                userDrawCount={userDrawCount}
+                lastDrawTime={lastDrawTime}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Draw button */}
         <motion.button

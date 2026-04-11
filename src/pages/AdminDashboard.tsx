@@ -8,7 +8,7 @@ import { StorePanel } from './StoreDashboard';
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
   Search, CheckCircle2, Loader2, ChevronRight, ShieldCheck,
-  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff, ImageIcon, X,
+  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff, ImageIcon, X, QrCode, Copy,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -17,7 +17,8 @@ import {
 } from 'recharts';
 import { db, storage, handleFirestoreError, OperationType } from '../firebase';
 import { Store, UserProfile, DrawRecord, Coupon, UserRole, Announcement } from '../types';
-import { ROLES } from '../constants';
+import { ROLES, LIFF_URL, generateJoinCode } from '../constants';
+import { QRCodeSVG } from 'qrcode.react';
 
 type AdminView = 'menu' | 'stores' | 'userlist' | 'stats' | 'announce';
 
@@ -32,6 +33,8 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [managingStore, setManagingStore] = useState<Store | null>(null);
+  const [qrStoreId, setQrStoreId] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const fetchStores = useCallback(async () => {
     setLoading(true);
@@ -52,7 +55,7 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
     setSaving(true);
     try {
       const id = newName.trim().toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
-      const store: Store = { id, name: newName.trim(), description: newDesc.trim(), isActive: true, createdAt: Date.now() };
+      const store: Store = { id, name: newName.trim(), description: newDesc.trim(), isActive: true, joinCode: generateJoinCode(), createdAt: Date.now() };
       await setDoc(doc(db, 'stores', id), store);
       setNewName('');
       setNewDesc('');
@@ -91,6 +94,13 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
     }
   };
 
+  const copyUrl = (store: Store) => {
+    const url = `${LIFF_URL}?join=${store.joinCode ?? store.id}`;
+    navigator.clipboard.writeText(url).catch(() => {});
+    setCopied(store.id);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
   if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
 
   // Show per-store management panel when selected
@@ -100,6 +110,33 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
 
   return (
     <div className="p-6 space-y-4">
+      {/* QR Modal */}
+      {qrStoreId && (() => {
+        const s = stores.find(x => x.id === qrStoreId);
+        if (!s) return null;
+        const joinUrl = `${LIFF_URL}?join=${s.joinCode ?? s.id}`;
+        return (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6"
+            onClick={() => setQrStoreId(null)}>
+            <motion.div initial={{ scale: 0.85 }} animate={{ scale: 1 }}
+              className="bg-white rounded-3xl p-8 shadow-2xl text-center max-w-xs w-full"
+              onClick={e => e.stopPropagation()}>
+              <p className="font-bold text-gray-900 mb-1">{s.name}</p>
+              <p className="text-xs text-gray-400 mb-5">顧客掃描此 QR 碼即可加入抽獎</p>
+              <div className="flex justify-center mb-4 p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                <QRCodeSVG value={joinUrl} size={200} fgColor="#1a1a1a" />
+              </div>
+              <p className="text-xs font-mono font-bold text-[#27ae60] bg-[#f0fff4] px-3 py-1.5 rounded-lg mb-4">
+                驗證碼：{s.joinCode ?? s.id}
+              </p>
+              <button onClick={() => setQrStoreId(null)}
+                className="w-full py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm font-bold">關閉</button>
+            </motion.div>
+          </motion.div>
+        );
+      })()}
+
       {stores.map(store => {
         const active = store.isActive !== false;
         return (
@@ -133,12 +170,35 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
             </div>
             {store.description && <p className="text-xs text-gray-400 mb-2">{store.description}</p>}
 
+            {store.joinCode && (
+              <div className="mb-2 space-y-1.5">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">入場連結</p>
+                <div className="bg-[#f0fff4] border border-green-100 rounded-lg px-3 py-2 text-[11px] font-mono text-[#27ae60] break-all select-all leading-relaxed">
+                  {`${LIFF_URL}?join=${store.joinCode}`}
+                </div>
+                <div className="flex gap-1.5">
+                  <button onClick={() => copyUrl(store)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                      copied === store.id ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}>
+                    <Copy className="w-3.5 h-3.5" />
+                    {copied === store.id ? '已複製！' : '複製連結'}
+                  </button>
+                  <button onClick={() => setQrStoreId(store.id)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">
+                    <QrCode className="w-3.5 h-3.5" />
+                    顯示 QR 碼
+                  </button>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={() => setManagingStore(store)}
               className="w-full py-2 rounded-xl bg-[#f0fff4] border border-green-100 text-[#27ae60] text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-green-100 transition-colors"
             >
               <ChevronRight className="w-3.5 h-3.5" />
-              進入庫存 / 贈送 / 統計 / 匯入
+              進入管理
             </button>
           </div>
         );
