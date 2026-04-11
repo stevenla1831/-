@@ -6,7 +6,6 @@ import { useAuth } from './AuthContext';
 import DrawPage from './pages/DrawPage';
 import MyCouponsPage from './pages/MyCouponsPage';
 import AdminDashboard from './pages/AdminDashboard';
-import StoreDashboard from './pages/StoreDashboard';
 import ProfilePage from './pages/ProfilePage';
 
 /* ─── Loading Screen ─────────────────────────────────────────── */
@@ -88,9 +87,7 @@ export default function App() {
   if (!isAuthReady || loading) return <LoadingScreen />;
   if (!profile) return <LoginScreen />;
 
-  const adminPage = profile.role === 'admin'
-    ? <AdminDashboard profile={profile} />
-    : <StoreDashboard profile={profile} />;
+  const adminPage = <AdminDashboard profile={profile} />;
 
   // Tabs are kept mounted after first visit; hidden via CSS to avoid remounting/refetch
   const tabs = [

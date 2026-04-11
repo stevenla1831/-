@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   collection, query, where, getDocs, addDoc, doc,
-  orderBy, limit, runTransaction, updateDoc,
+  orderBy, limit, runTransaction,
 } from 'firebase/firestore';
-import { Gift, Store as StoreIcon, AlertCircle, CheckCircle2, Loader2, Sparkles, Megaphone, X, ScanLine } from 'lucide-react';
+import { Gift, Store as StoreIcon, AlertCircle, Loader2, Sparkles, Megaphone, X, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -140,8 +140,6 @@ const ResultCard: React.FC<{ coupon: Coupon; storeName: string; onBack: () => vo
 
 /* ─── Main DrawPage ───────────────────────────────────────────── */
 const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
-  const isUser = profile.role === 'user';
-
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStore, setSelectedStore] = useState<Store | null>(null);
   const [drawing, setDrawing] = useState(false);
@@ -150,54 +148,6 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
   const [error, setError] = useState<string | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
-
-  // Store unlock via URL param (for role=user only)
-  const [extraUnlocked, setExtraUnlocked] = useState<string[]>([]); // joined this session
-  const [joining, setJoining] = useState(false);
-  const [joinToast, setJoinToast] = useState<string | null>(null);
-  const pendingJoinCode = useRef<string | null>(
-    new URLSearchParams(window.location.search).get('join')
-  );
-
-  // Effective unlocked stores (from profile + newly joined this session)
-  const unlockedIds = isUser
-    ? [...new Set([...(profile.unlockedStores ?? []), ...extraUnlocked])]
-    : null; // null = no restriction
-
-  const visibleStores = unlockedIds
-    ? stores.filter(s => unlockedIds.includes(s.id))
-    : stores;
-
-  const handleJoinByCode = async (rawCode: string) => {
-    const code = rawCode.trim().toUpperCase();
-    if (!code) return;
-    setJoining(true);
-    try {
-      // Find store by joinCode
-      const q = query(collection(db, 'stores'), where('joinCode', '==', code), limit(1));
-      const snap = await getDocs(q);
-      if (snap.empty) return; // silently ignore invalid codes from URL
-      const store = { ...snap.docs[0].data(), id: snap.docs[0].id } as Store;
-      const currentUnlocked = profile.unlockedStores ?? [];
-      if (currentUnlocked.includes(store.id) || extraUnlocked.includes(store.id)) {
-        // Already unlocked — just show toast so user knows they're in
-        setJoinToast(`歡迎回到「${store.name}」！`);
-        setTimeout(() => setJoinToast(null), 3000);
-        return;
-      }
-      const updated = [...currentUnlocked, store.id];
-      await updateDoc(doc(db, 'users', profile.uid), { unlockedStores: updated });
-      setExtraUnlocked(prev => [...prev, store.id]);
-      // Add store to local list if not present
-      setStores(prev => prev.find(s => s.id === store.id) ? prev : [...prev, store]);
-      setJoinToast(`成功加入「${store.name}」的抽獎！`);
-      setTimeout(() => setJoinToast(null), 4000);
-    } catch {
-      // URL-based unlock failure — non-critical, don't alert user
-    } finally {
-      setJoining(false);
-    }
-  };
 
   useEffect(() => {
     const fetchStores = async () => {
@@ -223,20 +173,9 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
         // non-critical, ignore
       }
     };
-
-    const init = async () => {
-      await fetchStores();
-      await fetchAnnouncements();
-      // Process URL join param (e.g. ?join=ABC123 from QR code scan)
-      if (pendingJoinCode.current && isUser) {
-        const code = pendingJoinCode.current;
-        pendingJoinCode.current = null;
-        window.history.replaceState({}, '', window.location.pathname);
-        await handleJoinByCode(code);
-      }
-    };
-    init();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchStores();
+    fetchAnnouncements();
+  }, []);
 
   const handleDraw = async () => {
     if (!selectedStore) return;
@@ -369,18 +308,6 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
       </header>
 
       <div className="space-y-5">
-        {/* Join success toast */}
-        <AnimatePresence>
-          {joinToast && (
-            <motion.div key="toast" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="bg-green-50 border border-green-200 rounded-2xl p-4 flex items-center gap-3">
-              <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
-              <p className="text-sm font-bold text-green-700 flex-1">{joinToast}</p>
-              <button onClick={() => setJoinToast(null)}><X className="w-4 h-4 text-green-400" /></button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* Announcements — filter by selected store */}
         <AnimatePresence>
           {announcements.filter(a => {
@@ -428,7 +355,7 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
             選擇店家
           </h2>
           <div className="space-y-2">
-            {visibleStores.map(store => {
+            {stores.map(store => {
               const inactive = store.isActive === false;
               return (
                 <button
@@ -453,23 +380,12 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
                 </button>
               );
             })}
-            {/* Empty state for users who haven't joined any store */}
-            {isUser && visibleStores.length === 0 && (
-              <div className="text-center py-8">
-                <ScanLine className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-                <p className="text-sm font-bold text-gray-500 mb-1">尚未加入任何店家</p>
-                <p className="text-xs text-gray-400">請掃描店家提供的 QR 碼連結加入抽獎</p>
-              </div>
+            {stores.length === 0 && (
+              <p className="text-center text-gray-300 py-6 text-sm">目前尚無可用店家</p>
             )}
           </div>
         </div>
 
-        {/* URL-based join in progress (shown while processing ?join= param) */}
-        {joining && (
-          <div className="flex items-center gap-2 text-sm text-[#27ae60] font-medium">
-            <Loader2 className="w-4 h-4 animate-spin" />正在驗證入場資格...
-          </div>
-        )}
 
         {/* Draw button */}
         <motion.button

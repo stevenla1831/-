@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  collection, query, where, getDocs, addDoc, doc, updateDoc, orderBy, limit, getDoc,
+  collection, query, where, getDocs, addDoc, doc, updateDoc, orderBy, limit, setDoc, getDoc,
 } from 'firebase/firestore';
 import {
-  Package, Gift, BarChart2, FileUp, ChevronRight, Search, CheckCircle2,
-  AlertCircle, Loader2, ArrowLeft, Users, QrCode,
+  Package, Gift, BarChart2, Plus, ChevronRight, Search, CheckCircle2,
+  AlertCircle, Loader2, ArrowLeft, X, Users,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { QRCodeSVG } from 'qrcode.react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Store, Coupon, UserProfile, DrawRecord } from '../types';
-import { COUPON_TYPES, getISOWeekKey, LIFF_URL } from '../constants';
+import { Store, Coupon, CouponBatch, CouponType, DrawRule, DrawRuleType, UserProfile, DrawRecord } from '../types';
+import { COUPON_TYPES, getISOWeekKey } from '../constants';
 
-type StoreView = 'menu' | 'inventory' | 'gift' | 'stats' | 'import';
+type StoreView = 'menu' | 'inventory' | 'gift' | 'stats' | 'addbatch';
 
 interface StorePanelProps {
   store: Store;
@@ -20,83 +19,314 @@ interface StorePanelProps {
   currentUserUid: string;
 }
 
-/* ─── Inventory ─────────────────────────────────────────────── */
-const InventoryPanel: React.FC<{ store: Store }> = ({ store }) => {
-  const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [loading, setLoading] = useState(true);
+/* ─── Gift Coupon Modal (gift a specific coupon to a user) ─────── */
+const GiftCouponModal: React.FC<{
+  coupon: Coupon;
+  store: Store;
+  onClose: () => void;
+  onSuccess: (couponId: string) => void;
+}> = ({ coupon, store, onClose, onSuccess }) => {
+  const [search, setSearch] = useState('');
+  const [foundUsers, setFoundUsers] = useState<UserProfile[]>([]);
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [gifting, setGifting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const loadCoupons = useCallback(async () => {
-    setLoading(true);
+  const handleSearch = async () => {
+    if (!search.trim()) return;
+    setFoundUsers([]); setSelectedUser(null); setError(null);
     try {
-      const q = query(collection(db, 'coupons'), where('storeId', '==', store.id), orderBy('status'));
-      const snap = await getDocs(q);
-      setCoupons(snap.docs.map(d => ({ ...d.data(), id: d.id } as Coupon)));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'coupons');
-    } finally {
-      setLoading(false);
-    }
-  }, [store.id]);
-
-  useEffect(() => { loadCoupons(); }, [loadCoupons]);
-
-  const counts = {
-    available: coupons.filter(c => c.status === 'available').length,
-    assigned: coupons.filter(c => c.status === 'assigned').length,
-    used: coupons.filter(c => c.status === 'used').length,
+      const [nameSnap, phoneSnap] = await Promise.all([
+        getDocs(query(collection(db, 'users'), where('displayName', '==', search.trim()), limit(5))),
+        getDocs(query(collection(db, 'users'), where('phoneNumber', '==', search.trim()), limit(5))),
+      ]);
+      const seen = new Set<string>();
+      const users: UserProfile[] = [];
+      [...nameSnap.docs, ...phoneSnap.docs].forEach(d => {
+        if (!seen.has(d.id)) { seen.add(d.id); users.push(d.data() as UserProfile); }
+      });
+      if (users.length === 0) setError('找不到該用戶');
+      else setFoundUsers(users);
+    } catch { setError('搜尋失敗，請稍後再試'); }
   };
 
-  const handleMarkUsed = async (coupon: Coupon) => {
-    if (coupon.status !== 'assigned') return;
+  const handleGift = async () => {
+    if (!selectedUser) return;
+    setGifting(true); setError(null);
     try {
-      await updateDoc(doc(db, 'coupons', coupon.id), { status: 'used', usedAt: Date.now() });
-      setCoupons(prev => prev.map(c => c.id === coupon.id ? { ...c, status: 'used', usedAt: Date.now() } : c));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `coupons/${coupon.id}`);
-    }
+      const now = Date.now();
+      await updateDoc(doc(db, 'coupons', coupon.id), { status: 'assigned', userId: selectedUser.uid, assignedAt: now });
+      await addDoc(collection(db, 'drawRecords'), {
+        id: crypto.randomUUID(), userId: selectedUser.uid, storeId: store.id,
+        couponId: coupon.id, week: getISOWeekKey(), timestamp: now, source: 'gift',
+      });
+      onSuccess(coupon.id);
+    } catch { setError('贈送失敗，請稍後再試'); } finally { setGifting(false); }
   };
-
-  if (loading) return <div className="p-8 text-center text-gray-400"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>;
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: '可用', count: counts.available, color: 'bg-green-50 text-green-600 border-green-100' },
-          { label: '已派發', count: counts.assigned, color: 'bg-blue-50 text-blue-600 border-blue-100' },
-          { label: '已使用', count: counts.used, color: 'bg-gray-50 text-gray-500 border-gray-100' },
-        ].map(item => (
-          <div key={item.label} className={`${item.color} border rounded-2xl p-3 text-center`}>
-            <p className="text-2xl font-black">{item.count}</p>
-            <p className="text-xs font-bold mt-1">{item.label}</p>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center p-4"
+      onClick={onClose}>
+      <motion.div initial={{ y: 80 }} animate={{ y: 0 }}
+        className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-start">
+          <div>
+            <p className="font-bold text-gray-900">贈送優惠碼</p>
+            <p className="text-xs font-mono text-gray-400 mt-0.5">{coupon.code}</p>
           </div>
-        ))}
-      </div>
-
-      {/* Coupon list — show assigned ones first so store can mark used */}
-      <div className="space-y-2">
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">已派發（點擊標記已使用）</p>
-        {coupons.filter(c => c.status === 'assigned').map(coupon => (
-          <button
-            key={coupon.id}
-            onClick={() => handleMarkUsed(coupon)}
-            className="w-full bg-white p-4 rounded-xl border border-blue-100 flex justify-between items-center hover:bg-blue-50 transition-colors"
-          >
-            <div className="text-left">
-              <p className="font-mono font-bold text-gray-900">{coupon.code}</p>
-              <p className="text-[10px] text-gray-400 mt-0.5">
-                {COUPON_TYPES.find(t => t.value === coupon.type)?.label} ·
-                派發於 {coupon.assignedAt ? new Date(coupon.assignedAt).toLocaleDateString() : '—'}
-              </p>
+          <button onClick={onClose}><X className="w-5 h-5 text-gray-400" /></button>
+        </div>
+        <div className="flex gap-2">
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            placeholder="搜尋 LINE 名稱 / 手機號碼"
+            className="flex-1 p-3 rounded-xl border border-gray-200 outline-none text-sm focus:ring-2 focus:ring-[#27ae60]" />
+          <button onClick={handleSearch} className="bg-[#27ae60] text-white p-3 rounded-xl">
+            <Search className="w-4 h-4" />
+          </button>
+        </div>
+        {error && <p className="text-red-500 text-xs flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" />{error}</p>}
+        {foundUsers.map(u => (
+          <button key={u.uid} onClick={() => setSelectedUser(u)}
+            className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+              selectedUser?.uid === u.uid ? 'border-[#27ae60] bg-[#f0fff4]' : 'border-gray-100 hover:border-gray-200'
+            }`}>
+            <img src={u.photoURL || ''} alt="" className="w-8 h-8 rounded-full shrink-0" />
+            <div className="text-left flex-1 min-w-0">
+              <p className="font-bold text-sm truncate">{u.displayName}</p>
+              <p className="text-[10px] text-gray-400">{u.phoneNumber || u.uid.slice(0, 12)}</p>
             </div>
-            <span className="text-xs bg-blue-100 text-blue-600 font-bold px-2 py-1 rounded-full">標記使用</span>
+            {selectedUser?.uid === u.uid && <CheckCircle2 className="w-4 h-4 text-[#27ae60] shrink-0" />}
           </button>
         ))}
-        {counts.assigned === 0 && (
-          <p className="text-center text-gray-300 py-4 text-sm">無待核銷序號</p>
+        {selectedUser && (
+          <button onClick={handleGift} disabled={gifting}
+            className="w-full bg-[#27ae60] text-white py-3 rounded-2xl font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+            {gifting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Gift className="w-4 h-4" />}
+            確認贈送給 {selectedUser.displayName}
+          </button>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+};
+
+/* ─── Inventory (batch-based) ───────────────────────────────── */
+const InventoryPanel: React.FC<{ store: Store; currentUserUid: string }> = ({ store, currentUserUid }) => {
+  const [batches, setBatches] = useState<CouponBatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedBatch, setSelectedBatch] = useState<CouponBatch | null>(null);
+  const [batchCoupons, setBatchCoupons] = useState<Coupon[]>([]);
+  const [loadingCoupons, setLoadingCoupons] = useState(false);
+  const [giftCoupon, setGiftCoupon] = useState<Coupon | null>(null);
+  const [startingCountdown, setStartingCountdown] = useState(false);
+
+  const loadBatches = useCallback(async () => {
+    setLoading(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'couponBatches'), where('storeId', '==', store.id)));
+      const list = snap.docs.map(d => ({ ...d.data(), id: d.id } as CouponBatch));
+      list.sort((a, b) => b.createdAt - a.createdAt);
+      setBatches(list);
+    } catch (err) { handleFirestoreError(err, OperationType.LIST, 'couponBatches'); }
+    finally { setLoading(false); }
+  }, [store.id]);
+
+  useEffect(() => { loadBatches(); }, [loadBatches]);
+
+  const openBatch = async (batch: CouponBatch) => {
+    setSelectedBatch(batch);
+    setBatchCoupons([]);
+    setLoadingCoupons(true);
+    try {
+      const snap = await getDocs(query(collection(db, 'coupons'), where('batchId', '==', batch.id)));
+      const list = snap.docs.map(d => ({ ...d.data(), id: d.id } as Coupon));
+      list.sort((a, b) => (a.status === 'available' ? -1 : 1) - (b.status === 'available' ? -1 : 1));
+      setBatchCoupons(list);
+    } catch { setBatchCoupons([]); }
+    finally { setLoadingCoupons(false); }
+  };
+
+  const handleStartCountdown = async () => {
+    if (!selectedBatch) return;
+    setStartingCountdown(true);
+    try {
+      const now = Date.now();
+      await updateDoc(doc(db, 'couponBatches', selectedBatch.id), { countdownStartedAt: now });
+      const updated = { ...selectedBatch, countdownStartedAt: now };
+      setSelectedBatch(updated);
+      setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
+    } catch (err) { handleFirestoreError(err, OperationType.UPDATE, `couponBatches/${selectedBatch.id}`); }
+    finally { setStartingCountdown(false); }
+  };
+
+  const drawRuleLabel = (batch: CouponBatch) => {
+    const r = batch.drawRule;
+    if (r.type === 'countdown') {
+      const secs = r.countdownSeconds ?? 0;
+      const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+      return `倒數計時 ${h > 0 ? h + '小時' : ''}${m > 0 ? m + '分' : ''}`;
+    }
+    if (r.type === 'cycle') {
+      let s = `每${r.intervalDays ?? 7}天抽一次`;
+      if (r.cycleLimitCount) s += `・最多${r.cycleLimitCount}次`;
+      if (r.cycleEndDate) s += `・至${new Date(r.cycleEndDate).toLocaleDateString()}`;
+      return `循環式・${s}`;
+    }
+    return `里程碑・抽${r.milestoneTrigger ?? 0}次送${r.milestoneBonusDraws ?? 0}次`;
+  };
+
+  const countdownInfo = (batch: CouponBatch) => {
+    if (batch.drawRule.type !== 'countdown') return null;
+    const start = batch.countdownStartedAt;
+    const dur = (batch.drawRule.countdownSeconds ?? 0) * 1000;
+    if (!start) return { active: false, label: '尚未啟動' };
+    const rem = start + dur - Date.now();
+    if (rem <= 0) return { active: false, label: '已結束' };
+    const m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000);
+    return { active: true, label: `進行中・剩 ${m}分${s}秒` };
+  };
+
+  const ruleBadgeColor = (type: DrawRuleType) =>
+    type === 'countdown' ? 'bg-orange-50 text-orange-600' :
+    type === 'cycle' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600';
+
+  /* ── Batch Detail View ── */
+  if (selectedBatch) {
+    const available = batchCoupons.filter(c => c.status === 'available');
+    const issued = batchCoupons.filter(c => c.status !== 'available');
+    const cInfo = countdownInfo(selectedBatch);
+
+    return (
+      <div className="p-6 space-y-5">
+        <div className="bg-[#f0fff4] border border-green-100 rounded-2xl p-4 space-y-3">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="font-bold text-gray-900">{selectedBatch.name}</p>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ruleBadgeColor(selectedBatch.drawRule.type)}`}>
+                {drawRuleLabel(selectedBatch)}
+              </span>
+            </div>
+            <button onClick={() => { setSelectedBatch(null); setBatchCoupons([]); }}
+              className="text-xs border border-gray-200 px-2.5 py-1 rounded-lg text-gray-500 hover:bg-gray-50">返回</button>
+          </div>
+          {selectedBatch.drawRule.type === 'countdown' && (
+            <div className="flex items-center gap-2">
+              <span className={`text-xs font-bold px-2 py-1 rounded-full ${cInfo?.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                {cInfo?.label ?? '—'}
+              </span>
+              {!cInfo?.active && (
+                <button onClick={handleStartCountdown} disabled={startingCountdown}
+                  className="text-xs bg-orange-500 text-white px-3 py-1 rounded-lg font-bold disabled:opacity-50">
+                  {startingCountdown ? '啟動中...' : '啟動倒數'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-green-50 border border-green-100 rounded-2xl p-4 text-center">
+            <p className="text-3xl font-black text-[#27ae60]">{available.length}</p>
+            <p className="text-xs font-bold text-green-700 mt-1">庫存</p>
+          </div>
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-center">
+            <p className="text-3xl font-black text-blue-600">{issued.length}</p>
+            <p className="text-xs font-bold text-blue-600 mt-1">已發放</p>
+          </div>
+        </div>
+
+        {loadingCoupons
+          ? <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>
+          : (
+            <div className="space-y-4">
+              {available.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">庫存（點擊贈送）</p>
+                  <div className="space-y-2">
+                    {available.map(c => (
+                      <div key={c.id} className="bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center">
+                        <div>
+                          <p className="font-mono font-bold text-gray-900">{c.code}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{COUPON_TYPES.find(t => t.value === c.type)?.label}</p>
+                        </div>
+                        <button onClick={() => setGiftCoupon(c)}
+                          className="bg-purple-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-purple-600 transition-colors">
+                          贈送
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {issued.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">已發放</p>
+                  <div className="space-y-2">
+                    {issued.map(c => (
+                      <div key={c.id} className="bg-gray-50 p-4 rounded-xl border border-gray-100 flex justify-between items-center">
+                        <div>
+                          <p className="font-mono font-bold text-gray-600">{c.code}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            {COUPON_TYPES.find(t => t.value === c.type)?.label}
+                            {c.assignedAt ? ` · 發放於 ${new Date(c.assignedAt).toLocaleDateString()}` : ''}
+                          </p>
+                        </div>
+                        <span className="text-[10px] bg-blue-100 text-blue-500 font-bold px-2 py-1 rounded-full shrink-0">已發放</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {batchCoupons.length === 0 && <p className="text-center text-gray-300 py-8 text-sm">此批次尚無優惠碼</p>}
+            </div>
+          )}
+
+        {giftCoupon && (
+          <GiftCouponModal
+            coupon={giftCoupon}
+            store={store}
+            onClose={() => setGiftCoupon(null)}
+            onSuccess={couponId => {
+              setBatchCoupons(prev => prev.map(c => c.id === couponId ? { ...c, status: 'assigned', assignedAt: Date.now() } : c));
+              setGiftCoupon(null);
+            }}
+          />
         )}
       </div>
+    );
+  }
+
+  /* ── Batch List View ── */
+  if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
+
+  return (
+    <div className="p-6 space-y-4">
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">優惠券批次</p>
+      {batches.length === 0 && (
+        <div className="text-center py-10">
+          <Package className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+          <p className="text-sm font-bold text-gray-400">尚無優惠券批次</p>
+          <p className="text-xs text-gray-300 mt-1">請至「新增優惠券批次」建立</p>
+        </div>
+      )}
+      {batches.map(batch => (
+        <button key={batch.id} onClick={() => openBatch(batch)}
+          className="w-full bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-left hover:border-[#27ae60]/40 transition-colors">
+          <div className="flex justify-between items-center mb-1.5">
+            <p className="font-bold text-gray-900">{batch.name}</p>
+            <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ruleBadgeColor(batch.drawRule.type)}`}>
+              {drawRuleLabel(batch)}
+            </span>
+            <span className="text-[10px] text-gray-400">{new Date(batch.createdAt).toLocaleDateString()}</span>
+          </div>
+        </button>
+      ))}
     </div>
   );
 };
@@ -330,275 +560,209 @@ const StatsPanel: React.FC<{ store: Store }> = ({ store }) => {
   );
 };
 
-/* ─── CSV helper ─────────────────────────────────────────────── */
-function parseCSV(rawText: string): string[][] {
-  // Strip UTF-8 BOM if present
-  const text = rawText.replace(/^\ufeff/, '');
-  // Auto-detect delimiter: count tabs vs commas vs semicolons in first non-empty line
-  const firstLine = text.split(/\r?\n/).find(l => l.trim()) ?? '';
-  const tabs = (firstLine.match(/\t/g) ?? []).length;
-  const commas = (firstLine.match(/,/g) ?? []).length;
-  const semis = (firstLine.match(/;/g) ?? []).length;
-  const delim = tabs >= commas && tabs >= semis ? '\t' : semis > commas ? ';' : ',';
-
-  return text.split(/\r?\n/).map(line => {
-    const cols: string[] = [];
-    let cur = '';
-    let inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQ = !inQ; continue; }
-      if (ch === delim && !inQ) { cols.push(cur.trim()); cur = ''; }
-      else cur += ch;
-    }
-    cols.push(cur.trim());
-    return cols;
-  }).filter(r => r.some(c => c));
-}
-
-function guessType(val: string): string {
-  if (val.includes('100')) return '100pt';
-  if (val.includes('50')) return '50pt';
-  if (val.includes('20')) return '20pt';
-  return '100pt';
-}
-
-function parseDate(val: string): number | undefined {
-  if (!val) return undefined;
-  const d = new Date(val.replace(/\//g, '-'));
-  return isNaN(d.getTime()) ? undefined : d.getTime();
-}
-
-/* ─── Import ─────────────────────────────────────────────────── */
-const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
-  const [mode, setMode] = useState<'manual' | 'csv'>('manual');
-  const [couponType, setCouponType] = useState<string>('100pt');
+/* ─── Add Batch Panel ────────────────────────────────────────── */
+const AddBatchPanel: React.FC<{ store: Store; onDone: () => void }> = ({ store, onDone }) => {
+  const [batchName, setBatchName] = useState('');
+  const [couponType, setCouponType] = useState<CouponType>('100pt');
+  const [ruleType, setRuleType] = useState<DrawRuleType>('cycle');
   const [codesText, setCodesText] = useState('');
-  const [csvPreview, setCsvPreview] = useState<{ code: string; type: string; eventName?: string; validFrom?: number; validTo?: number; minAmount?: number }[]>([]);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ success: number; dupes: number } | null>(null);
 
-  // CSV column header index mapping
-  // Note: '序列號' removed from code keys — in many CSVs it's a row counter, not the coupon code
-  const COL = {
-    code: ['優惠碼', 'code', 'coupon'],
-    type: ['優惠方式', 'type'],
-    event: ['活動名稱', 'event'],
-    from: ['活動開始時間', 'start'],
-    to: ['活動結束時間', 'end'],
-    min: ['低銷金額', '最低消費', 'min'],
-  };
+  // Countdown params
+  const [cHours, setCHours] = useState(1);
+  const [cMins, setCMins] = useState(0);
+  // Cycle params
+  const [intervalDays, setIntervalDays] = useState(7);
+  const [cycleLimitType, setCycleLimitType] = useState<'none' | 'count' | 'date'>('none');
+  const [cycleLimitCount, setCycleLimitCount] = useState(10);
+  const [cycleEndDateStr, setCycleEndDateStr] = useState('');
+  // Milestone params
+  const [mTrigger, setMTrigger] = useState(5);
+  const [mBonus, setMBonus] = useState(1);
 
-  const findIdx = (headers: string[], keys: string[]) =>
-    headers.findIndex(h => keys.some(k => h.includes(k)));
-
-  const processCSVText = (text: string) => {
-    const rows = parseCSV(text);
-    if (rows.length < 2) { alert('CSV 檔案內容不足，請確認格式。'); return; }
-    const headers = rows[0].map(h => h.trim());
-    const ci = {
-      code: findIdx(headers, COL.code),
-      type: findIdx(headers, COL.type),
-      event: findIdx(headers, COL.event),
-      from: findIdx(headers, COL.from),
-      to: findIdx(headers, COL.to),
-      min: findIdx(headers, COL.min),
+  const buildRule = (): DrawRule => {
+    if (ruleType === 'countdown') return { type: 'countdown', countdownSeconds: cHours * 3600 + cMins * 60 };
+    if (ruleType === 'cycle') return {
+      type: 'cycle', intervalDays,
+      cycleLimitCount: cycleLimitType === 'count' ? cycleLimitCount : undefined,
+      cycleEndDate: cycleLimitType === 'date' && cycleEndDateStr ? new Date(cycleEndDateStr).getTime() : undefined,
     };
-    if (ci.code < 0) {
-      alert(`找不到「優惠碼」欄位。\n偵測到的欄位：${headers.join('、')}\n請確認第一列含「優惠碼」或「code」欄位名稱。`);
-      return;
-    }
-    const items = rows.slice(1).map(r => ({
-      code: r[ci.code] ?? '',
-      type: ci.type >= 0 && r[ci.type] ? guessType(r[ci.type]) : couponType,
-      eventName: ci.event >= 0 ? r[ci.event] : undefined,
-      validFrom: ci.from >= 0 ? parseDate(r[ci.from] ?? '') : undefined,
-      validTo: ci.to >= 0 ? parseDate(r[ci.to] ?? '') : undefined,
-      minAmount: ci.min >= 0 && r[ci.min] ? Number(r[ci.min].replace(/[^0-9.]/g, '')) || undefined : undefined,
-    })).filter(x => x.code);
-    setCsvPreview(items);
+    return { type: 'milestone', milestoneTrigger: mTrigger, milestoneBonusDraws: mBonus };
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-
-    let text: string;
-    // Check for UTF-8 BOM (EF BB BF)
-    if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
-      text = new TextDecoder('UTF-8').decode(buffer);
-    } else {
-      // Decode as UTF-8 and check if the first line contains valid Chinese or known keywords
-      const utf8 = new TextDecoder('UTF-8').decode(buffer).replace(/^\ufeff/, '');
-      const firstLine = utf8.split(/\r?\n/)[0] ?? '';
-      // Valid CJK characters are U+4E00–U+9FFF; garbled Big5 shows non-CJK junk
-      const hasChinese = /[\u4e00-\u9fff]/.test(firstLine);
-      const hasEnglishKeyword = /code|coupon|start|end|type/i.test(firstLine);
-      if (hasChinese || hasEnglishKeyword) {
-        // Looks like valid UTF-8
-        text = utf8;
-      } else {
-        // Fallback: try Big5 (Windows Traditional Chinese Excel export without BOM)
-        try {
-          text = new TextDecoder('big5').decode(buffer);
-        } catch {
-          text = utf8; // give up and use UTF-8
-        }
-      }
-    }
-
-    processCSVText(text);
-  };
-
-  const runImport = async (items: { code: string; type: string; eventName?: string; validFrom?: number; validTo?: number; minAmount?: number }[]) => {
-    setImporting(true);
-    setResult(null);
+  const handleCreate = async () => {
+    if (!batchName.trim()) { alert('請填入批次名稱'); return; }
+    const codes = codesText.split('\n').map(c => c.trim()).filter(Boolean);
+    if (codes.length === 0) { alert('請輸入至少一組優惠碼'); return; }
+    setImporting(true); setResult(null);
     try {
+      const batchId = crypto.randomUUID();
+      const batch: CouponBatch = { id: batchId, storeId: store.id, name: batchName.trim(), couponType, drawRule: buildRule(), createdAt: Date.now() };
+      await setDoc(doc(db, 'couponBatches', batchId), batch);
       const existingSnap = await getDocs(query(collection(db, 'coupons'), where('storeId', '==', store.id)));
       const existingCodes = new Set(existingSnap.docs.map(d => d.data().code));
       let success = 0, dupes = 0;
-      for (const item of items) {
-        if (existingCodes.has(item.code)) { dupes++; continue; }
-        const data: Record<string, unknown> = {
-          id: crypto.randomUUID(), storeId: store.id,
-          type: item.type, code: item.code, status: 'available',
-        };
-        if (item.eventName) data.eventName = item.eventName;
-        if (item.validFrom) data.validFrom = item.validFrom;
-        if (item.validTo) data.validTo = item.validTo;
-        if (item.minAmount) data.minAmount = item.minAmount;
-        await addDoc(collection(db, 'coupons'), data);
+      for (const code of codes) {
+        if (existingCodes.has(code)) { dupes++; continue; }
+        await addDoc(collection(db, 'coupons'), { id: crypto.randomUUID(), storeId: store.id, batchId, type: couponType, code, status: 'available' });
         success++;
       }
       setResult({ success, dupes });
-      setCodesText('');
-      setCsvPreview([]);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'coupons');
-    } finally {
-      setImporting(false);
-    }
+      setBatchName(''); setCodesText('');
+    } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'couponBatches'); }
+    finally { setImporting(false); }
   };
 
-  const handleManualImport = () => {
-    const codes = codesText.split('\n').map(c => c.trim()).filter(Boolean);
-    runImport(codes.map(code => ({ code, type: couponType })));
-  };
+  const RULE_OPTIONS = [
+    { id: 'countdown' as DrawRuleType, label: '倒數計時', desc: '商家手動啟動後，限時窗口內才可抽獎' },
+    { id: 'cycle' as DrawRuleType, label: '循環式', desc: '每隔 N 天可抽一次，可設上限或截止日' },
+    { id: 'milestone' as DrawRuleType, label: '抽獎里程', desc: '累積抽 N 次後，獲得額外抽獎機會' },
+  ];
 
   return (
     <div className="p-6 space-y-5">
       {result && (
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-          className="bg-green-50 border border-green-100 rounded-2xl p-4">
+          className="bg-green-50 border border-green-100 rounded-2xl p-4 flex items-center justify-between">
           <p className="text-sm font-bold text-green-700">
-            成功匯入 {result.success} 組{result.dupes > 0 ? `，略過 ${result.dupes} 組重複` : ''}
+            批次建立完成！成功新增 {result.success} 組{result.dupes > 0 ? `，略過 ${result.dupes} 重複` : ''}
           </p>
+          <button onClick={onDone} className="text-xs text-[#27ae60] font-bold underline ml-2 shrink-0">查看庫存</button>
         </motion.div>
       )}
 
-      {/* Mode toggle */}
-      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
-        {(['manual', 'csv'] as const).map(m => (
-          <button key={m} onClick={() => setMode(m)}
-            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
-              mode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400'
-            }`}>
-            {m === 'manual' ? '手動輸入' : 'CSV 檔案匯入'}
-          </button>
-        ))}
+      <div>
+        <label className="block text-sm font-bold text-gray-700 mb-2">批次名稱 *</label>
+        <input type="text" value={batchName} onChange={e => setBatchName(e.target.value)}
+          placeholder="例：4月春季活動、五一連假批次"
+          className="w-full p-3 rounded-xl border border-gray-200 outline-none text-sm focus:ring-2 focus:ring-[#27ae60]" />
       </div>
 
-      {mode === 'manual' ? (
-        <>
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">序號類型</label>
-            <div className="flex gap-2">
-              {COUPON_TYPES.map(t => (
-                <button key={t.value} onClick={() => setCouponType(t.value)}
-                  className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-all ${
-                    couponType === t.value ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]' : 'border-gray-100 text-gray-400'
-                  }`}>
-                  {t.label}
-                </button>
-              ))}
+      <div>
+        <label className="block text-sm font-bold text-gray-700 mb-2">優惠券類型</label>
+        <div className="flex gap-2">
+          {COUPON_TYPES.map(t => (
+            <button key={t.value} onClick={() => setCouponType(t.value as CouponType)}
+              className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-all ${
+                couponType === t.value ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]' : 'border-gray-100 text-gray-400'
+              }`}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-bold text-gray-700 mb-2">發放方式</label>
+        <div className="space-y-2">
+          {RULE_OPTIONS.map(opt => (
+            <button key={opt.id} onClick={() => setRuleType(opt.id)}
+              className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
+                ruleType === opt.id ? 'border-[#27ae60] bg-[#f0fff4]' : 'border-gray-100 hover:border-gray-200'
+              }`}>
+              <p className={`font-bold text-sm ${ruleType === opt.id ? 'text-[#27ae60]' : 'text-gray-700'}`}>{opt.label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {ruleType === 'countdown' && (
+        <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 space-y-3">
+          <p className="text-sm font-bold text-orange-700">倒數時長設定</p>
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <p className="text-xs text-gray-500 mb-1">小時</p>
+              <input type="number" min={0} max={23} value={cHours} onChange={e => setCHours(+e.target.value || 0)}
+                className="w-full p-2 rounded-xl border border-gray-200 text-sm outline-none text-center font-bold" />
+            </div>
+            <span className="text-gray-400 font-bold pb-2">:</span>
+            <div className="flex-1">
+              <p className="text-xs text-gray-500 mb-1">分鐘</p>
+              <input type="number" min={0} max={59} value={cMins} onChange={e => setCMins(+e.target.value || 0)}
+                className="w-full p-2 rounded-xl border border-gray-200 text-sm outline-none text-center font-bold" />
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">貼上序號（每行一組）</label>
-            <textarea
-              rows={10}
-              value={codesText}
-              onChange={e => setCodesText(e.target.value)}
-              placeholder={'ABC123\nDEF456\nGHI789'}
-              className="w-full p-3 rounded-xl border border-gray-200 outline-none font-mono text-sm focus:ring-2 focus:ring-[#27ae60]"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              共 {codesText.split('\n').filter(c => c.trim()).length} 組
-            </p>
-          </div>
-          <button onClick={handleManualImport} disabled={importing || !codesText.trim()}
-            className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
-            {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
-            {importing ? '匯入中...' : '確認匯入'}
-          </button>
-        </>
-      ) : (
-        <>
-          <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center">
-            <FileUp className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <p className="text-sm font-bold text-gray-600 mb-1">上傳 CSV 檔案</p>
-            <p className="text-xs text-gray-400 mb-3">需含「優惠碼」欄位，可選填：活動名稱、優惠方式、活動開始/結束時間、低銷金額</p>
-            <label className="cursor-pointer bg-[#27ae60] text-white text-sm font-bold px-4 py-2 rounded-xl inline-block">
-              選擇檔案
-              <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
-            </label>
-          </div>
-
-          {csvPreview.length > 0 && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-              <p className="text-sm font-bold text-gray-700">預覽（共 {csvPreview.length} 組）</p>
-              <div className="max-h-48 overflow-y-auto space-y-1.5 rounded-xl border border-gray-100 p-3">
-                {csvPreview.slice(0, 20).map((item, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-1.5">
-                    <span className="font-mono font-bold text-gray-800">{item.code}</span>
-                    <div className="flex items-center gap-2 text-gray-400">
-                      {item.eventName && <span>{item.eventName}</span>}
-                      <span className="text-[#27ae60] font-bold">{COUPON_TYPES.find(t => t.value === item.type)?.label}</span>
-                    </div>
-                  </div>
-                ))}
-                {csvPreview.length > 20 && <p className="text-center text-xs text-gray-400 py-1">...還有 {csvPreview.length - 20} 組</p>}
-              </div>
-              <button onClick={() => runImport(csvPreview)} disabled={importing}
-                className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
-                {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
-                {importing ? '匯入中...' : `確認匯入 ${csvPreview.length} 組`}
-              </button>
-            </motion.div>
-          )}
-        </>
+          <p className="text-xs text-orange-600">抽獎窗口：共 {cHours * 60 + cMins} 分鐘</p>
+        </div>
       )}
+
+      {ruleType === 'cycle' && (
+        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 space-y-3">
+          <p className="text-sm font-bold text-blue-700">循環設定</p>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">每</span>
+            <input type="number" min={1} value={intervalDays} onChange={e => setIntervalDays(+e.target.value || 1)}
+              className="w-16 p-2 rounded-xl border border-gray-200 text-sm outline-none text-center font-bold" />
+            <span className="text-sm text-gray-600">天可抽一次</span>
+          </div>
+          <div className="space-y-1.5">
+            {([['none','不限次數'],['count','最多幾次'],['date','截止日期']] as const).map(([val, label]) => (
+              <button key={val} onClick={() => setCycleLimitType(val)}
+                className={`flex items-center gap-2 w-full p-2 rounded-xl transition-all ${cycleLimitType === val ? 'bg-white border border-blue-300' : ''}`}>
+                <div className={`w-3.5 h-3.5 rounded-full border-2 shrink-0 ${cycleLimitType === val ? 'border-blue-500 bg-blue-500' : 'border-gray-300'}`} />
+                <span className={`text-sm font-bold ${cycleLimitType === val ? 'text-blue-700' : 'text-gray-500'}`}>{label}</span>
+              </button>
+            ))}
+          </div>
+          {cycleLimitType === 'count' && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">最多</span>
+              <input type="number" min={1} value={cycleLimitCount} onChange={e => setCycleLimitCount(+e.target.value || 1)}
+                className="w-20 p-2 rounded-xl border border-gray-200 text-sm outline-none text-center font-bold" />
+              <span className="text-sm text-gray-600">次</span>
+            </div>
+          )}
+          {cycleLimitType === 'date' && (
+            <input type="date" value={cycleEndDateStr} onChange={e => setCycleEndDateStr(e.target.value)}
+              className="w-full p-2 rounded-xl border border-gray-200 text-sm outline-none" />
+          )}
+        </div>
+      )}
+
+      {ruleType === 'milestone' && (
+        <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4 space-y-3">
+          <p className="text-sm font-bold text-purple-700">里程碑設定</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-gray-600">抽獎滿</span>
+            <input type="number" min={1} value={mTrigger} onChange={e => setMTrigger(+e.target.value || 1)}
+              className="w-16 p-2 rounded-xl border border-gray-200 text-sm outline-none text-center font-bold" />
+            <span className="text-sm text-gray-600">次，送</span>
+            <input type="number" min={1} value={mBonus} onChange={e => setMBonus(+e.target.value || 1)}
+              className="w-16 p-2 rounded-xl border border-gray-200 text-sm outline-none text-center font-bold" />
+            <span className="text-sm text-gray-600">次額外機會</span>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <label className="block text-sm font-bold text-gray-700 mb-2">優惠碼（每行一組）</label>
+        <textarea rows={10} value={codesText} onChange={e => setCodesText(e.target.value)}
+          placeholder={'ABC123\nDEF456\nGHI789'}
+          className="w-full p-3 rounded-xl border border-gray-200 outline-none font-mono text-sm focus:ring-2 focus:ring-[#27ae60]" />
+        <p className="text-xs text-gray-400 mt-1">共 {codesText.split('\n').filter(c => c.trim()).length} 組</p>
+      </div>
+
+      <button onClick={handleCreate} disabled={importing || !batchName.trim() || !codesText.trim()}
+        className="w-full bg-[#27ae60] text-white py-4 rounded-2xl font-bold shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+        {importing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+        {importing ? '建立中...' : '建立批次並匯入'}
+      </button>
     </div>
   );
 };
 
+
 /* ─── Store Panel (wrapper with sub-nav) ────────────────────── */
 export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }) => {
   const [view, setView] = useState<StoreView>('menu');
-  const [showQR, setShowQR] = useState(false);
 
   const menuItems = [
     { id: 'inventory' as StoreView, label: '庫存管理', icon: Package, color: 'text-blue-500' },
     { id: 'gift' as StoreView, label: '贈送優惠碼', icon: Gift, color: 'text-purple-500' },
     { id: 'stats' as StoreView, label: '抽獎統計', icon: BarChart2, color: 'text-orange-500' },
-    { id: 'import' as StoreView, label: '批量匯入', icon: FileUp, color: 'text-teal-500' },
+    { id: 'addbatch' as StoreView, label: '新增批次', icon: Plus, color: 'text-teal-500' },
   ];
 
-  const joinUrl = store.joinCode ? `${LIFF_URL}?join=${store.joinCode}` : null;
   const viewLabel = menuItems.find(m => m.id === view)?.label ?? store.name;
 
   return (
@@ -611,37 +775,7 @@ export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUs
           <p className="text-xs text-gray-400">{store.name}</p>
           <h2 className="font-bold text-gray-900">{view === 'menu' ? '店家管理' : viewLabel}</h2>
         </div>
-        {view === 'menu' && joinUrl && (
-          <button onClick={() => setShowQR(true)}
-            className="p-2 rounded-xl bg-[#f0fff4] text-[#27ae60] border border-green-100">
-            <QrCode className="w-5 h-5" />
-          </button>
-        )}
       </div>
-
-      {/* QR Code Modal */}
-      <AnimatePresence>
-        {showQR && joinUrl && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6"
-            onClick={() => setShowQR(false)}>
-            <motion.div initial={{ scale: 0.85 }} animate={{ scale: 1 }}
-              className="bg-white rounded-3xl p-8 shadow-2xl text-center max-w-xs w-full"
-              onClick={e => e.stopPropagation()}>
-              <p className="font-bold text-gray-900 mb-1">{store.name}</p>
-              <p className="text-xs text-gray-400 mb-5">讓顧客掃描此 QR 碼加入抽獎資格</p>
-              <div className="flex justify-center mb-4 p-3 bg-gray-50 rounded-2xl border border-gray-100">
-                <QRCodeSVG value={joinUrl} size={200} fgColor="#1a1a1a" />
-              </div>
-              <p className="text-xs font-mono font-bold text-[#27ae60] bg-[#f0fff4] px-3 py-1.5 rounded-lg mb-4">
-                驗證碼：{store.joinCode}
-              </p>
-              <button onClick={() => setShowQR(false)}
-                className="w-full py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm font-bold">關閉</button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence mode="wait">
         {view === 'menu' && (
@@ -660,7 +794,7 @@ export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUs
         )}
         {view === 'inventory' && (
           <motion.div key="inventory" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <InventoryPanel store={store} />
+            <InventoryPanel store={store} currentUserUid={currentUserUid} />
           </motion.div>
         )}
         {view === 'gift' && (
@@ -673,9 +807,9 @@ export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUs
             <StatsPanel store={store} />
           </motion.div>
         )}
-        {view === 'import' && (
-          <motion.div key="import" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <ImportPanel store={store} />
+        {view === 'addbatch' && (
+          <motion.div key="addbatch" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <AddBatchPanel store={store} onDone={() => setView('inventory')} />
           </motion.div>
         )}
       </AnimatePresence>
