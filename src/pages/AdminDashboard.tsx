@@ -4,10 +4,11 @@ import {
   orderBy, limit, where,
 } from 'firebase/firestore';
 import { StorePanel } from './StoreDashboard';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
   Search, CheckCircle2, Loader2, ChevronRight, ShieldCheck,
-  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff,
+  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff, QrCode, Copy,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -16,7 +17,7 @@ import {
 } from 'recharts';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Store, UserProfile, DrawRecord, Coupon, UserRole, Announcement } from '../types';
-import { ROLES } from '../constants';
+import { ROLES, LIFF_URL, generateJoinCode } from '../constants';
 
 type AdminView = 'menu' | 'stores' | 'userlist' | 'stats' | 'announce';
 
@@ -31,6 +32,8 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [managingStore, setManagingStore] = useState<Store | null>(null);
+  const [qrStoreId, setQrStoreId] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const fetchStores = useCallback(async () => {
     setLoading(true);
@@ -51,7 +54,7 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
     setSaving(true);
     try {
       const id = newName.trim().toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
-      const store: Store = { id, name: newName.trim(), description: newDesc.trim(), isActive: true, createdAt: Date.now() };
+      const store: Store = { id, name: newName.trim(), description: newDesc.trim(), isActive: true, joinCode: generateJoinCode(), createdAt: Date.now() };
       await setDoc(doc(db, 'stores', id), store);
       setNewName('');
       setNewDesc('');
@@ -92,6 +95,14 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
 
   if (loading) return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-300" /></div>;
 
+  const copyUrl = (store: Store) => {
+    const code = store.joinCode ?? store.id;
+    const url = `${LIFF_URL}?join=${code}`;
+    navigator.clipboard.writeText(url).catch(() => {});
+    setCopied(store.id);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
   // Show per-store management panel when selected
   if (managingStore) {
     return <StorePanel store={managingStore} onBack={() => setManagingStore(null)} currentUserUid={adminUid} />;
@@ -99,6 +110,39 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
 
   return (
     <div className="p-6 space-y-4">
+      {/* QR Modal */}
+      {qrStoreId && (() => {
+        const s = stores.find(x => x.id === qrStoreId);
+        if (!s) return null;
+        const joinUrl = `${LIFF_URL}?join=${s.joinCode ?? s.id}`;
+        return (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6"
+            onClick={() => setQrStoreId(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.85 }}
+              animate={{ scale: 1 }}
+              className="bg-white rounded-3xl p-8 shadow-2xl text-center max-w-xs w-full"
+              onClick={e => e.stopPropagation()}
+            >
+              <p className="font-bold text-gray-900 mb-1">{s.name}</p>
+              <p className="text-xs text-gray-400 mb-5">顧客掃描此 QR 碼即可加入抽獎</p>
+              <div className="flex justify-center mb-4 p-3 bg-gray-50 rounded-2xl border border-gray-100 inline-block mx-auto">
+                <QRCodeSVG value={joinUrl} size={200} fgColor="#1a1a1a" />
+              </div>
+              <p className="text-xs font-mono font-bold text-[#27ae60] bg-[#f0fff4] px-3 py-1.5 rounded-lg mb-4">
+                驗證碼：{s.joinCode ?? s.id}
+              </p>
+              <button onClick={() => setQrStoreId(null)}
+                className="w-full py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm font-bold">關閉</button>
+            </motion.div>
+          </motion.div>
+        );
+      })()}
+
       {stores.map(store => {
         const active = store.isActive !== false;
         return (
@@ -131,6 +175,27 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
               </div>
             </div>
             {store.description && <p className="text-xs text-gray-400 mb-2">{store.description}</p>}
+
+            {/* Join code + actions row */}
+            <div className="flex items-center gap-2 mb-2">
+              <div className="flex-1 bg-[#f0fff4] border border-green-100 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                <span className="text-[10px] text-gray-400 shrink-0">驗證碼</span>
+                <span className="font-mono font-bold text-[#27ae60] text-sm tracking-widest">
+                  {store.joinCode ?? '—'}
+                </span>
+              </div>
+              <button onClick={() => copyUrl(store)}
+                title="複製入場連結"
+                className={`p-2 rounded-lg transition-colors ${copied === store.id ? 'text-[#27ae60] bg-green-50' : 'text-gray-400 hover:bg-gray-50'}`}>
+                <Copy className="w-4 h-4" />
+              </button>
+              <button onClick={() => setQrStoreId(store.id)}
+                title="顯示 QR 碼"
+                className="p-2 text-gray-400 hover:bg-gray-50 rounded-lg transition-colors">
+                <QrCode className="w-4 h-4" />
+              </button>
+            </div>
+
             <button
               onClick={() => setManagingStore(store)}
               className="w-full py-2 rounded-xl bg-[#f0fff4] border border-green-100 text-[#27ae60] text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-green-100 transition-colors"

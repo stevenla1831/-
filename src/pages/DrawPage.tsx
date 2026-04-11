@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   collection, query, where, getDocs, addDoc, doc,
-  orderBy, limit, runTransaction,
+  orderBy, limit, runTransaction, updateDoc,
 } from 'firebase/firestore';
-import { Gift, Store as StoreIcon, AlertCircle, CheckCircle2, Loader2, Sparkles, Megaphone, X } from 'lucide-react';
+import { Gift, Store as StoreIcon, AlertCircle, CheckCircle2, Loader2, Sparkles, Megaphone, X, KeyRound, ScanLine } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -140,6 +140,8 @@ const ResultCard: React.FC<{ coupon: Coupon; storeName: string; onBack: () => vo
 
 /* ─── Main DrawPage ───────────────────────────────────────────── */
 const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
+  const isUser = profile.role === 'user';
+
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStore, setSelectedStore] = useState<Store | null>(null);
   const [drawing, setDrawing] = useState(false);
@@ -148,6 +150,63 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
   const [error, setError] = useState<string | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+
+  // Store unlock (for role=user only)
+  const [extraUnlocked, setExtraUnlocked] = useState<string[]>([]); // joined this session
+  const [joinInput, setJoinInput] = useState('');
+  const [joining, setJoining] = useState(false);
+  const [joinToast, setJoinToast] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [showJoinPanel, setShowJoinPanel] = useState(false);
+  const pendingJoinCode = useRef<string | null>(
+    new URLSearchParams(window.location.search).get('join')
+  );
+
+  // Effective unlocked stores (from profile + newly joined this session)
+  const unlockedIds = isUser
+    ? [...new Set([...(profile.unlockedStores ?? []), ...extraUnlocked])]
+    : null; // null = no restriction
+
+  const visibleStores = unlockedIds
+    ? stores.filter(s => unlockedIds.includes(s.id))
+    : stores;
+
+  const handleJoinByCode = async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) return;
+    setJoining(true);
+    setJoinError(null);
+    try {
+      // Find store by joinCode
+      const q = query(collection(db, 'stores'), where('joinCode', '==', code), limit(1));
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        setJoinError('找不到此驗證碼，請確認後重試。');
+        return;
+      }
+      const store = { ...snap.docs[0].data(), id: snap.docs[0].id } as Store;
+      const currentUnlocked = profile.unlockedStores ?? [];
+      if (currentUnlocked.includes(store.id) || extraUnlocked.includes(store.id)) {
+        setJoinToast(`您已加入「${store.name}」！`);
+        setJoinInput('');
+        setShowJoinPanel(false);
+        return;
+      }
+      const updated = [...currentUnlocked, store.id];
+      await updateDoc(doc(db, 'users', profile.uid), { unlockedStores: updated });
+      setExtraUnlocked(prev => [...prev, store.id]);
+      // Add store to local list if not present
+      setStores(prev => prev.find(s => s.id === store.id) ? prev : [...prev, store]);
+      setJoinToast(`成功加入「${store.name}」的抽獎！`);
+      setJoinInput('');
+      setShowJoinPanel(false);
+      setTimeout(() => setJoinToast(null), 4000);
+    } catch {
+      setJoinError('加入失敗，請稍後再試。');
+    } finally {
+      setJoining(false);
+    }
+  };
 
   useEffect(() => {
     const fetchStores = async () => {
@@ -173,9 +232,20 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
         // non-critical, ignore
       }
     };
-    fetchStores();
-    fetchAnnouncements();
-  }, []);
+
+    const init = async () => {
+      await fetchStores();
+      await fetchAnnouncements();
+      // Process URL join param (e.g. ?join=ABC123 from QR code scan)
+      if (pendingJoinCode.current && isUser) {
+        const code = pendingJoinCode.current;
+        pendingJoinCode.current = null;
+        window.history.replaceState({}, '', window.location.pathname);
+        await handleJoinByCode(code);
+      }
+    };
+    init();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDraw = async () => {
     if (!selectedStore) return;
@@ -302,12 +372,24 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
 
   return (
     <div className="p-6 pb-24">
-      <header className="mb-8">
+      <header className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">你好，{profile.displayName} 👋</h1>
         <p className="text-gray-500 text-sm">每週限抽一次，選擇店家後點擊抽獎</p>
       </header>
 
       <div className="space-y-5">
+        {/* Join success toast */}
+        <AnimatePresence>
+          {joinToast && (
+            <motion.div key="toast" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="bg-green-50 border border-green-200 rounded-2xl p-4 flex items-center gap-3">
+              <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+              <p className="text-sm font-bold text-green-700 flex-1">{joinToast}</p>
+              <button onClick={() => setJoinToast(null)}><X className="w-4 h-4 text-green-400" /></button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Announcements — filter by selected store */}
         <AnimatePresence>
           {announcements.filter(a => {
@@ -342,7 +424,7 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
             選擇店家
           </h2>
           <div className="space-y-2">
-            {stores.map(store => {
+            {visibleStores.map(store => {
               const inactive = store.isActive === false;
               return (
                 <button
@@ -367,11 +449,74 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
                 </button>
               );
             })}
-            {stores.length === 0 && (
-              <p className="text-center text-gray-300 py-6 text-sm">目前沒有活動中的店家</p>
+            {/* Empty state for users who haven't joined any store */}
+            {isUser && visibleStores.length === 0 && (
+              <div className="text-center py-8">
+                <ScanLine className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+                <p className="text-sm font-bold text-gray-500 mb-1">尚未加入任何店家</p>
+                <p className="text-xs text-gray-400">請掃描店家的 QR 碼，或輸入驗證碼加入</p>
+              </div>
             )}
           </div>
         </div>
+
+        {/* Join store panel — only for regular users */}
+        {isUser && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <button
+              onClick={() => setShowJoinPanel(!showJoinPanel)}
+              className="w-full flex items-center justify-between px-5 py-4"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-50 rounded-lg">
+                  <KeyRound className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-gray-800 text-sm">加入新商店</p>
+                  <p className="text-xs text-gray-400">掃描 QR 碼或手動輸入驗證碼</p>
+                </div>
+              </div>
+              <span className={`text-xs font-bold text-blue-500 transition-transform ${showJoinPanel ? 'rotate-180' : ''}`}>▼</span>
+            </button>
+
+            <AnimatePresence>
+              {showJoinPanel && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="px-5 pb-4 border-t border-gray-50 pt-3 space-y-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={joinInput}
+                        onChange={e => { setJoinInput(e.target.value.toUpperCase()); setJoinError(null); }}
+                        onKeyDown={e => e.key === 'Enter' && handleJoinByCode(joinInput)}
+                        placeholder="輸入 6 位驗證碼（如：ABC123）"
+                        className="flex-1 p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-400 outline-none text-sm font-mono tracking-widest uppercase"
+                        maxLength={8}
+                      />
+                      <button
+                        onClick={() => handleJoinByCode(joinInput)}
+                        disabled={joining || !joinInput.trim()}
+                        className="bg-blue-500 text-white px-4 rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {joining ? <Loader2 className="w-4 h-4 animate-spin" /> : '加入'}
+                      </button>
+                    </div>
+                    {joinError && (
+                      <p className="text-red-500 text-xs flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5" />{joinError}
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
         {/* Draw button */}
         <motion.button

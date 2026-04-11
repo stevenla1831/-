@@ -4,12 +4,13 @@ import {
 } from 'firebase/firestore';
 import {
   Package, Gift, BarChart2, FileUp, ChevronRight, Search, CheckCircle2,
-  AlertCircle, Loader2, ArrowLeft, Users,
+  AlertCircle, Loader2, ArrowLeft, Users, QrCode,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { QRCodeSVG } from 'qrcode.react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Store, Coupon, UserProfile, DrawRecord } from '../types';
-import { COUPON_TYPES, getISOWeekKey } from '../constants';
+import { COUPON_TYPES, getISOWeekKey, LIFF_URL } from '../constants';
 
 type StoreView = 'menu' | 'inventory' | 'gift' | 'stats' | 'import';
 
@@ -548,6 +549,7 @@ const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
 /* ─── Store Panel (wrapper with sub-nav) ────────────────────── */
 export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUserUid }) => {
   const [view, setView] = useState<StoreView>('menu');
+  const [showQR, setShowQR] = useState(false);
 
   const menuItems = [
     { id: 'inventory' as StoreView, label: '庫存管理', icon: Package, color: 'text-blue-500' },
@@ -556,6 +558,7 @@ export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUs
     { id: 'import' as StoreView, label: '批量匯入', icon: FileUp, color: 'text-teal-500' },
   ];
 
+  const joinUrl = store.joinCode ? `${LIFF_URL}?join=${store.joinCode}` : null;
   const viewLabel = menuItems.find(m => m.id === view)?.label ?? store.name;
 
   return (
@@ -564,17 +567,47 @@ export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUs
         <button onClick={view === 'menu' ? onBack : () => setView('menu')} className="text-[#27ae60]">
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div>
+        <div className="flex-1">
           <p className="text-xs text-gray-400">{store.name}</p>
           <h2 className="font-bold text-gray-900">{view === 'menu' ? '店家管理' : viewLabel}</h2>
         </div>
+        {view === 'menu' && joinUrl && (
+          <button onClick={() => setShowQR(true)}
+            className="p-2 rounded-xl bg-[#f0fff4] text-[#27ae60] border border-green-100">
+            <QrCode className="w-5 h-5" />
+          </button>
+        )}
       </div>
+
+      {/* QR Code Modal */}
+      <AnimatePresence>
+        {showQR && joinUrl && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6"
+            onClick={() => setShowQR(false)}>
+            <motion.div initial={{ scale: 0.85 }} animate={{ scale: 1 }}
+              className="bg-white rounded-3xl p-8 shadow-2xl text-center max-w-xs w-full"
+              onClick={e => e.stopPropagation()}>
+              <p className="font-bold text-gray-900 mb-1">{store.name}</p>
+              <p className="text-xs text-gray-400 mb-5">讓顧客掃描此 QR 碼加入抽獎資格</p>
+              <div className="flex justify-center mb-4 p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                <QRCodeSVG value={joinUrl} size={200} fgColor="#1a1a1a" />
+              </div>
+              <p className="text-xs font-mono font-bold text-[#27ae60] bg-[#f0fff4] px-3 py-1.5 rounded-lg mb-4">
+                驗證碼：{store.joinCode}
+              </p>
+              <button onClick={() => setShowQR(false)}
+                className="w-full py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm font-bold">關閉</button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence mode="wait">
         {view === 'menu' && (
           <motion.div key="menu" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               {menuItems.map(item => (
                 <button key={item.id} onClick={() => setView(item.id)}
                   className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center gap-3 hover:border-gray-200 transition-colors">

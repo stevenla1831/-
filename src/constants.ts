@@ -1,4 +1,10 @@
 export const LIFF_ID = '2009693707-DihGx8m5';
+export const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
+
+/** Generate a random 6-char alphanumeric join code */
+export function generateJoinCode(): string {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
 
 export const COUPON_TYPES = [
   { label: '100點', value: '100pt' },

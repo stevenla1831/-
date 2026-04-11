@@ -7,6 +7,7 @@ export interface UserProfile {
   phoneNumber?: string;
   role: UserRole;
   assignedStores?: string[]; // For store owners
+  unlockedStores?: string[]; // For users: stores they've registered for (scanned QR or entered code)
   createdAt: number;
 }
 
@@ -15,6 +16,7 @@ export interface Store {
   name: string;
   description: string;
   isActive: boolean; // false = lottery paused for this store
+  joinCode?: string; // 6-char code customers use to unlock this store's lottery
   createdAt: number;
 }
 
