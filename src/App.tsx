@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Gift, Ticket, User, LayoutDashboard, Loader2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { useAuth } from './AuthContext';
 
 import DrawPage from './pages/DrawPage';
@@ -77,42 +77,40 @@ const Navbar = ({
 export default function App() {
   const { profile, loading, isAuthReady } = useAuth();
   const [activeTab, setActiveTab] = useState('draw');
+  // Track which tabs have been visited so we only mount them once
+  const visitedTabs = useRef<Set<string>>(new Set(['draw']));
+
+  const handleTabChange = (tab: string) => {
+    visitedTabs.current.add(tab);
+    setActiveTab(tab);
+  };
 
   if (!isAuthReady || loading) return <LoadingScreen />;
   if (!profile) return <LoginScreen />;
 
-  const renderPage = () => {
-    switch (activeTab) {
-      case 'draw':
-        return <DrawPage profile={profile} />;
-      case 'my-coupons':
-        return <MyCouponsPage profile={profile} />;
-      case 'admin':
-        return profile.role === 'admin'
-          ? <AdminDashboard profile={profile} />
-          : <StoreDashboard profile={profile} />;
-      case 'profile':
-        return <ProfilePage profile={profile} />;
-      default:
-        return <DrawPage profile={profile} />;
-    }
-  };
+  const adminPage = profile.role === 'admin'
+    ? <AdminDashboard profile={profile} />
+    : <StoreDashboard profile={profile} />;
+
+  // Tabs are kept mounted after first visit; hidden via CSS to avoid remounting/refetch
+  const tabs = [
+    { id: 'draw', el: <DrawPage profile={profile} /> },
+    { id: 'my-coupons', el: <MyCouponsPage profile={profile} /> },
+    { id: 'admin', el: adminPage },
+    { id: 'profile', el: <ProfilePage profile={profile} /> },
+  ];
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] font-sans text-gray-900 max-w-md mx-auto relative shadow-2xl">
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, x: 10 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: -10 }}
-          transition={{ duration: 0.2 }}
-        >
-          {renderPage()}
-        </motion.div>
-      </AnimatePresence>
-
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} role={profile.role} />
+      {tabs.map(({ id, el }) => {
+        if (!visitedTabs.current.has(id)) return null;
+        return (
+          <div key={id} style={{ display: activeTab === id ? 'block' : 'none' }}>
+            {el}
+          </div>
+        );
+      })}
+      <Navbar activeTab={activeTab} setActiveTab={handleTabChange} role={profile.role} />
     </div>
   );
 }

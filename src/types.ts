@@ -65,4 +65,5 @@ export interface Announcement {
   createdAt: number;
   updatedAt: number;
   storeIds?: string[] | 'all'; // undefined or 'all' = show to all stores
+  imageUrl?: string;   // Firebase Storage URL for banner image/GIF
 }

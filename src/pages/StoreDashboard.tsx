@@ -331,7 +331,16 @@ const StatsPanel: React.FC<{ store: Store }> = ({ store }) => {
 };
 
 /* ─── CSV helper ─────────────────────────────────────────────── */
-function parseCSV(text: string): string[][] {
+function parseCSV(rawText: string): string[][] {
+  // Strip UTF-8 BOM if present
+  const text = rawText.replace(/^\ufeff/, '');
+  // Auto-detect delimiter: count tabs vs commas vs semicolons in first non-empty line
+  const firstLine = text.split(/\r?\n/).find(l => l.trim()) ?? '';
+  const tabs = (firstLine.match(/\t/g) ?? []).length;
+  const commas = (firstLine.match(/,/g) ?? []).length;
+  const semis = (firstLine.match(/;/g) ?? []).length;
+  const delim = tabs >= commas && tabs >= semis ? '\t' : semis > commas ? ';' : ',';
+
   return text.split(/\r?\n/).map(line => {
     const cols: string[] = [];
     let cur = '';
@@ -339,7 +348,7 @@ function parseCSV(text: string): string[][] {
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === '"') { inQ = !inQ; continue; }
-      if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+      if (ch === delim && !inQ) { cols.push(cur.trim()); cur = ''; }
       else cur += ch;
     }
     cols.push(cur.trim());
@@ -382,33 +391,41 @@ const ImportPanel: React.FC<{ store: Store }> = ({ store }) => {
   const findIdx = (headers: string[], keys: string[]) =>
     headers.findIndex(h => keys.some(k => h.includes(k)));
 
+  const processCSVText = (text: string) => {
+    const rows = parseCSV(text);
+    if (rows.length < 2) { alert('CSV 檔案內容不足，請確認格式。'); return; }
+    const headers = rows[0].map(h => h.trim());
+    const ci = {
+      code: findIdx(headers, COL.code),
+      type: findIdx(headers, COL.type),
+      event: findIdx(headers, COL.event),
+      from: findIdx(headers, COL.from),
+      to: findIdx(headers, COL.to),
+      min: findIdx(headers, COL.min),
+    };
+    if (ci.code < 0) {
+      alert(`找不到「優惠碼」欄位。\n偵測到的欄位：${headers.join('、')}\n請確認第一列含「優惠碼」或「code」欄位名稱。`);
+      return;
+    }
+    const items = rows.slice(1).map(r => ({
+      code: r[ci.code] ?? '',
+      type: ci.type >= 0 && r[ci.type] ? guessType(r[ci.type]) : couponType,
+      eventName: ci.event >= 0 ? r[ci.event] : undefined,
+      validFrom: ci.from >= 0 ? parseDate(r[ci.from] ?? '') : undefined,
+      validTo: ci.to >= 0 ? parseDate(r[ci.to] ?? '') : undefined,
+      minAmount: ci.min >= 0 && r[ci.min] ? Number(r[ci.min].replace(/[^0-9.]/g, '')) || undefined : undefined,
+    })).filter(x => x.code);
+    setCsvPreview(items);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Try UTF-8 first; if Chinese characters look garbled, fall back to Big5
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
-      const rows = parseCSV(text);
-      if (rows.length < 2) return;
-      const headers = rows[0].map(h => h.trim());
-      const ci = {
-        code: findIdx(headers, COL.code),
-        type: findIdx(headers, COL.type),
-        event: findIdx(headers, COL.event),
-        from: findIdx(headers, COL.from),
-        to: findIdx(headers, COL.to),
-        min: findIdx(headers, COL.min),
-      };
-      if (ci.code < 0) { alert('找不到「優惠碼」欄位，請確認 CSV 欄位標題。'); return; }
-      const items = rows.slice(1).map(r => ({
-        code: r[ci.code] ?? '',
-        type: ci.type >= 0 && r[ci.type] ? guessType(r[ci.type]) : couponType,
-        eventName: ci.event >= 0 ? r[ci.event] : undefined,
-        validFrom: ci.from >= 0 ? parseDate(r[ci.from] ?? '') : undefined,
-        validTo: ci.to >= 0 ? parseDate(r[ci.to] ?? '') : undefined,
-        minAmount: ci.min >= 0 && r[ci.min] ? Number(r[ci.min].replace(/[^0-9.]/g, '')) || undefined : undefined,
-      })).filter(x => x.code);
-      setCsvPreview(items);
+      processCSVText(text);
     };
     reader.readAsText(file, 'UTF-8');
     e.target.value = '';

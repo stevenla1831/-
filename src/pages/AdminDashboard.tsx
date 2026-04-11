@@ -3,19 +3,20 @@ import {
   collection, query, getDocs, setDoc, doc, updateDoc, deleteDoc,
   orderBy, limit, where,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { StorePanel } from './StoreDashboard';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Store as StoreIcon, Users, BarChart2, ArrowLeft, Plus, Trash2,
   Search, CheckCircle2, Loader2, ChevronRight, ShieldCheck,
-  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff, QrCode, Copy,
+  ToggleLeft, ToggleRight, Download, Megaphone, Eye, EyeOff, QrCode, Copy, ImageIcon, X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { db, storage, handleFirestoreError, OperationType } from '../firebase';
 import { Store, UserProfile, DrawRecord, Coupon, UserRole, Announcement } from '../types';
 import { ROLES, LIFF_URL, generateJoinCode } from '../constants';
 
@@ -469,6 +470,9 @@ const AnnouncementManagement: React.FC = () => {
   const [targetMode, setTargetMode] = useState<'all' | 'specific'>('all');
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -488,22 +492,46 @@ const AnnouncementManagement: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    const url = URL.createObjectURL(file);
+    setImagePreview(url);
+    e.target.value = '';
+  };
+
+  const clearImage = () => {
+    setImageFile(null);
+    if (imagePreview) { URL.revokeObjectURL(imagePreview); setImagePreview(null); }
+  };
+
   const handleAdd = async () => {
     if (!text.trim()) return;
     if (targetMode === 'specific' && selectedStoreIds.length === 0) return;
     setSaving(true);
     try {
+      let imageUrl: string | undefined;
+      if (imageFile) {
+        setUploadingImage(true);
+        const storageRef = ref(storage, `announcements/${crypto.randomUUID()}_${imageFile.name}`);
+        await uploadBytes(storageRef, imageFile);
+        imageUrl = await getDownloadURL(storageRef);
+        setUploadingImage(false);
+      }
       const id = crypto.randomUUID();
       const now = Date.now();
       const storeIds: string[] | 'all' = targetMode === 'all' ? 'all' : selectedStoreIds;
-      const a: Announcement = { id, message: text.trim(), active: true, createdAt: now, updatedAt: now, storeIds };
+      const a: Announcement = { id, message: text.trim(), active: true, createdAt: now, updatedAt: now, storeIds, ...(imageUrl ? { imageUrl } : {}) };
       await setDoc(doc(db, 'announcements', id), a);
       setText('');
       setTargetMode('all');
       setSelectedStoreIds([]);
+      clearImage();
       setEditing(false);
       load();
     } catch (err) {
+      setUploadingImage(false);
       handleFirestoreError(err, OperationType.CREATE, 'announcements');
     } finally {
       setSaving(false);
@@ -540,7 +568,13 @@ const AnnouncementManagement: React.FC = () => {
   return (
     <div className="p-6 space-y-4">
       {announcements.map(a => (
-        <div key={a.id} className={`bg-white p-4 rounded-xl border shadow-sm ${a.active ? 'border-[#27ae60]/30' : 'border-gray-100 opacity-60'}`}>
+        <div key={a.id} className={`bg-white rounded-xl border shadow-sm overflow-hidden ${a.active ? 'border-[#27ae60]/30' : 'border-gray-100 opacity-60'}`}>
+          {a.imageUrl && (
+            <div className="w-full" style={{ aspectRatio: '375/120' }}>
+              <img src={a.imageUrl} alt="" className="w-full h-full object-cover" />
+            </div>
+          )}
+          <div className="p-4">
           <p className="text-sm text-gray-800 leading-relaxed mb-2">{a.message}</p>
           <div className="flex items-center gap-2 mb-3">
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-500 border border-blue-100">
@@ -565,6 +599,7 @@ const AnnouncementManagement: React.FC = () => {
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
+          </div>
         </div>
       ))}
 
@@ -578,6 +613,37 @@ const AnnouncementManagement: React.FC = () => {
             placeholder="輸入公告內容..."
             className="w-full p-3 rounded-xl border border-gray-200 outline-none text-sm focus:ring-2 focus:ring-[#27ae60] resize-none"
           />
+
+          {/* Image upload (optional banner, 375×120 aspect ratio) */}
+          <div>
+            <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1">
+              <ImageIcon className="w-3.5 h-3.5" />公告圖片（選填，建議比例 375:120）
+            </p>
+            {imagePreview ? (
+              <div className="relative rounded-xl overflow-hidden border border-gray-200">
+                <div style={{ aspectRatio: '375/120' }}>
+                  <img src={imagePreview} alt="預覽" className="w-full h-full object-cover" />
+                </div>
+                <button
+                  onClick={clearImage}
+                  className="absolute top-2 right-2 bg-black/50 text-white rounded-full p-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <label className="flex items-center justify-center gap-2 border-2 border-dashed border-gray-200 rounded-xl py-4 cursor-pointer hover:border-[#27ae60]/40 transition-colors">
+                <ImageIcon className="w-5 h-5 text-gray-300" />
+                <span className="text-sm text-gray-400">點擊上傳圖片或 GIF</span>
+                <input
+                  type="file"
+                  accept="image/*,.gif"
+                  className="hidden"
+                  onChange={handleImageSelect}
+                />
+              </label>
+            )}
+          </div>
 
           {/* Store targeting */}
           <div>
@@ -612,12 +678,12 @@ const AnnouncementManagement: React.FC = () => {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => { setEditing(false); setText(''); setTargetMode('all'); setSelectedStoreIds([]); }}
+            <button onClick={() => { setEditing(false); setText(''); setTargetMode('all'); setSelectedStoreIds([]); clearImage(); }}
               className="flex-1 py-2 rounded-xl border border-gray-200 text-gray-500 text-sm font-bold">取消</button>
             <button onClick={handleAdd}
-              disabled={saving || !text.trim() || (targetMode === 'specific' && selectedStoreIds.length === 0)}
-              className="flex-1 py-2 rounded-xl bg-[#27ae60] text-white text-sm font-bold disabled:opacity-50">
-              {saving ? '儲存中...' : '發布公告'}
+              disabled={saving || uploadingImage || !text.trim() || (targetMode === 'specific' && selectedStoreIds.length === 0)}
+              className="flex-1 py-2 rounded-xl bg-[#27ae60] text-white text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-1">
+              {uploadingImage ? <><Loader2 className="w-4 h-4 animate-spin" />上傳圖片中...</> : saving ? '儲存中...' : '發布公告'}
             </button>
           </div>
         </motion.div>
