@@ -177,25 +177,37 @@ const StoreManagement: React.FC<{ adminUid: string }> = ({ adminUid }) => {
             </div>
             {store.description && <p className="text-xs text-gray-400 mb-2">{store.description}</p>}
 
-            {/* Join code + actions row */}
-            <div className="flex items-center gap-2 mb-2">
-              <div className="flex-1 bg-[#f0fff4] border border-green-100 rounded-lg px-3 py-1.5 flex items-center gap-2">
-                <span className="text-[10px] text-gray-400 shrink-0">驗證碼</span>
-                <span className="font-mono font-bold text-[#27ae60] text-sm tracking-widest">
-                  {store.joinCode ?? '—'}
-                </span>
+            {/* Join URL — fully visible and selectable */}
+            {store.joinCode ? (
+              <div className="mb-2 space-y-1.5">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">入場連結（放入LINE圖文選單或轉成QR碼）</p>
+                <div className="bg-[#f0fff4] border border-green-100 rounded-lg px-3 py-2 text-[11px] font-mono text-[#27ae60] break-all select-all leading-relaxed">
+                  {`${LIFF_URL}?join=${store.joinCode}`}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => copyUrl(store)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                      copied === store.id
+                        ? 'border-[#27ae60] bg-[#f0fff4] text-[#27ae60]'
+                        : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {copied === store.id ? '已複製！' : '複製連結'}
+                  </button>
+                  <button
+                    onClick={() => setQrStoreId(store.id)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    顯示 QR 碼
+                  </button>
+                </div>
               </div>
-              <button onClick={() => copyUrl(store)}
-                title="複製入場連結"
-                className={`p-2 rounded-lg transition-colors ${copied === store.id ? 'text-[#27ae60] bg-green-50' : 'text-gray-400 hover:bg-gray-50'}`}>
-                <Copy className="w-4 h-4" />
-              </button>
-              <button onClick={() => setQrStoreId(store.id)}
-                title="顯示 QR 碼"
-                className="p-2 text-gray-400 hover:bg-gray-50 rounded-lg transition-colors">
-                <QrCode className="w-4 h-4" />
-              </button>
-            </div>
+            ) : (
+              <p className="text-xs text-gray-400 mb-2">（此店家尚無入場碼，請刪除後重新建立）</p>
+            )}
 
             <button
               onClick={() => setManagingStore(store)}
@@ -473,6 +485,7 @@ const AnnouncementManagement: React.FC = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -510,13 +523,32 @@ const AnnouncementManagement: React.FC = () => {
     if (!text.trim()) return;
     if (targetMode === 'specific' && selectedStoreIds.length === 0) return;
     setSaving(true);
+    setUploadError(null);
     try {
       let imageUrl: string | undefined;
       if (imageFile) {
         setUploadingImage(true);
-        const storageRef = ref(storage, `announcements/${crypto.randomUUID()}_${imageFile.name}`);
-        await uploadBytes(storageRef, imageFile);
-        imageUrl = await getDownloadURL(storageRef);
+        try {
+          // 30s timeout — if Storage not enabled or CORS issue, won't hang forever
+          const uploadTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('UPLOAD_TIMEOUT')), 30000)
+          );
+          const storageRef = ref(storage, `announcements/${crypto.randomUUID()}_${imageFile.name}`);
+          await Promise.race([uploadBytes(storageRef, imageFile), uploadTimeout]);
+          imageUrl = await getDownloadURL(storageRef);
+        } catch (uploadErr: unknown) {
+          setUploadingImage(false);
+          const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+          if (msg === 'UPLOAD_TIMEOUT') {
+            setUploadError('圖片上傳逾時。請確認 Firebase Storage 已在 Console 啟用，並已執行 firebase deploy 部署規則。');
+          } else if (msg.includes('storage/unauthorized') || msg.includes('permission')) {
+            setUploadError('權限不足：請先執行 firebase deploy 部署 Storage 規則。');
+          } else {
+            setUploadError(`圖片上傳失敗：${msg}`);
+          }
+          setSaving(false);
+          return;
+        }
         setUploadingImage(false);
       }
       const id = crypto.randomUUID();
@@ -531,8 +563,8 @@ const AnnouncementManagement: React.FC = () => {
       setEditing(false);
       load();
     } catch (err) {
-      setUploadingImage(false);
-      handleFirestoreError(err, OperationType.CREATE, 'announcements');
+      console.error('Announcement save error:', err);
+      setUploadError('公告儲存失敗，請稍後再試。');
     } finally {
       setSaving(false);
     }
@@ -677,8 +709,15 @@ const AnnouncementManagement: React.FC = () => {
             )}
           </div>
 
+          {uploadError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 flex items-start gap-2">
+              <span className="shrink-0">⚠️</span>
+              <span>{uploadError}</span>
+            </div>
+          )}
+
           <div className="flex gap-2">
-            <button onClick={() => { setEditing(false); setText(''); setTargetMode('all'); setSelectedStoreIds([]); clearImage(); }}
+            <button onClick={() => { setEditing(false); setText(''); setTargetMode('all'); setSelectedStoreIds([]); clearImage(); setUploadError(null); }}
               className="flex-1 py-2 rounded-xl border border-gray-200 text-gray-500 text-sm font-bold">取消</button>
             <button onClick={handleAdd}
               disabled={saving || uploadingImage || !text.trim() || (targetMode === 'specific' && selectedStoreIds.length === 0)}
