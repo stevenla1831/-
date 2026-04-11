@@ -757,7 +757,7 @@ export const StorePanel: React.FC<StorePanelProps> = ({ store, onBack, currentUs
   const [view, setView] = useState<StoreView>('menu');
 
   const menuItems = [
-    { id: 'inventory' as StoreView, label: '庫存管理', icon: Package, color: 'text-blue-500' },
+    { id: 'inventory' as StoreView, label: '優惠券庫存管理', icon: Package, color: 'text-blue-500' },
     { id: 'gift' as StoreView, label: '贈送優惠碼', icon: Gift, color: 'text-purple-500' },
     { id: 'stats' as StoreView, label: '抽獎統計', icon: BarChart2, color: 'text-orange-500' },
     { id: 'addbatch' as StoreView, label: '新增批次', icon: Plus, color: 'text-teal-500' },
