@@ -580,6 +580,7 @@ const DrawPage: React.FC<{ profile: UserProfile }> = ({ profile }) => {
         )}
 
         <p className="text-center text-xs text-gray-300">本週週期：{getISOWeekKey()}</p>
+        <p className="text-center text-[10px] text-gray-200 mt-1">dgcl80137 v1.1</p>
       </div>
     </div>
   );

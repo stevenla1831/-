@@ -932,7 +932,10 @@ const AdminDashboard: React.FC<{ profile: UserProfile }> = ({ profile }) => {
             <ArrowLeft className="w-5 h-5" />
           </button>
         )}
-        <h1 className="text-xl font-bold text-gray-900">{view === 'menu' ? '管理後台' : viewLabel}</h1>
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">{view === 'menu' ? '管理後台' : viewLabel}</h1>
+          {view === 'menu' && <p className="text-[10px] text-gray-300 mt-0.5">dgcl80137 v1.1</p>}
+        </div>
       </div>
 
       <AnimatePresence mode="wait">
